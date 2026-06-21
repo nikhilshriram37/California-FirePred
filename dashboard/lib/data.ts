@@ -109,16 +109,20 @@ export async function getActiveFires(): Promise<FeatureCollection> {
   if (!key) return empty;
 
   const bbox = "-124.5,32.5,-114.0,42.0"; // west,south,east,north (California)
-  const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${key}/VIIRS_NOAA20_NRT/${bbox}/1`;
+  const days = 2; // last 48h — a single satellite/day can be empty between passes
+  const sources = ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"];
 
-  try {
-    const res = await fetch(url, { next: { revalidate: 900 } }); // cache 15 min
-    if (!res.ok) return empty;
-    const text = await res.text();
-    return { type: "FeatureCollection", features: parseFirmsCsv(text) };
-  } catch {
-    return empty;
-  }
+  const results = await Promise.allSettled(
+    sources.map(async (src) => {
+      const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${key}/${src}/${bbox}/${days}`;
+      const res = await fetch(url, { next: { revalidate: 900 } }); // cache 15 min
+      if (!res.ok) return [];
+      return parseFirmsCsv(await res.text());
+    }),
+  );
+
+  const features = results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  return { type: "FeatureCollection", features };
 }
 
 function parseFirmsCsv(text: string): FeatureCollection["features"] {
