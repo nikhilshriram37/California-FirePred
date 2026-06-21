@@ -96,3 +96,28 @@ def persist_daily(day: pd.DataFrame, meta: dict, client=None) -> bool:
 
     logger.info("Persisted %s cells to Supabase for %s", len(day), date)
     return True
+
+
+def persist_forecast(day: pd.DataFrame, meta: dict, client=None) -> bool:
+    """Write one forecast horizon's per-cell scores to forecast_scores.
+
+    ``day`` carries grid_id, risk, tier; ``meta`` carries run_date, horizon,
+    data_date (target), model_version. No-op (False) if Supabase isn't configured.
+    """
+    client = client or get_client()
+    if client is None:
+        return False
+    rows = [{
+        "run_date": meta["run_date"], "target_date": meta["data_date"],
+        "horizon": int(meta["horizon"]), "grid_id": int(r.grid_id),
+        "risk": float(r.risk), "tier": str(r.tier), "model_version": meta.get("model_version"),
+    } for r in day.itertuples()]
+    try:
+        for i in range(0, len(rows), _CHUNK):
+            client.table("forecast_scores").upsert(
+                rows[i:i + _CHUNK], on_conflict="run_date,grid_id,horizon").execute()
+    except Exception as e:  # table may not exist yet (migration 0003) — don't crash the run
+        logger.warning("forecast persist skipped (%s) — run migration 0003", str(e)[:80])
+        return False
+    logger.info("Persisted forecast h+%s (%s) -> %s cells", meta["horizon"], meta["data_date"], len(day))
+    return True

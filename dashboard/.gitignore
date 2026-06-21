@@ -1,6 +1,9 @@
 /node_modules
 /.next
 /out
+
+# Generated forecast snapshots (served from Supabase in prod)
+/public/data/forecast
 .env.local
 .env*.local
 *.tsbuildinfo

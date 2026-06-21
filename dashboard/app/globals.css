@@ -54,6 +54,7 @@ html, body {
 }
 .badge.live { color: #7ee787; border-color: #2ea04326; }
 .badge.replay { color: var(--yellow); }
+.badge.forecast { color: #7cc7ff; border-color: #1f6feb44; }
 
 .sidebar {
   background: var(--panel);
@@ -90,6 +91,25 @@ html, body {
 
 .map-wrap { position: relative; }
 #map { position: absolute; inset: 0; }
+
+.day-selector {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(19, 26, 34, 0.92); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 10px; padding: 5px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.day-selector-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--muted); margin-right: 4px;
+}
+.day-btn {
+  background: transparent; color: var(--text); border: 1px solid transparent;
+  border-radius: 7px; padding: 5px 11px; font-size: 13px; font-weight: 600;
+  cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.day-btn:hover { background: var(--panel-2); }
+.day-btn.active { background: #1f6feb33; border-color: #1f6feb88; color: #cfe6ff; }
 
 .detail {
   position: absolute; top: 14px; right: 14px; width: 280px;

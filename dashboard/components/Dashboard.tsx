@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 
 import ControlPanel from "./ControlPanel";
 import CellDetail from "./CellDetail";
+import DaySelector from "./DaySelector";
 import type { CellProperties, FeatureCollection, RiskMeta, Tier } from "@/lib/types";
 
 // MapLibre touches `window`, so load the map only on the client.
@@ -24,12 +25,30 @@ function timeAgo(iso?: string): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+function isoDate(daysAhead: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + daysAhead);
+  return d.toISOString().slice(0, 10);
+}
+
+function tierCounts(fc: FeatureCollection | null): Record<Tier, number> {
+  const c: Record<Tier, number> = { Red: 0, Yellow: 0, Green: 0 };
+  for (const f of fc?.features ?? []) {
+    const t = (f.properties as any)?.tier as Tier;
+    if (t in c) c[t]++;
+  }
+  return c;
+}
+
 export default function Dashboard() {
   const [meta, setMeta] = useState<RiskMeta | null>(null);
-  const [risk, setRisk] = useState<FeatureCollection | null>(null);
   const [fires, setFires] = useState<FeatureCollection | null>(null);
   const [selected, setSelected] = useState<CellProperties | null>(null);
   const [visible, setVisible] = useState<Set<Tier>>(new Set(ALL_TIERS));
+
+  // horizon 0 = now (nowcast); 1..5 = forecast days ahead. Cache layers by horizon.
+  const [horizon, setHorizon] = useState(0);
+  const [layers, setLayers] = useState<Record<number, FeatureCollection>>({});
 
   useEffect(() => {
     let alive = true;
@@ -40,13 +59,21 @@ export default function Dashboard() {
     ]).then(([m, rk, fr]) => {
       if (!alive) return;
       setMeta(m);
-      setRisk(rk);
+      setLayers((prev) => ({ ...prev, 0: rk }));
       setFires(fr);
     });
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
+
+  // Lazily fetch a forecast horizon the first time it's selected.
+  useEffect(() => {
+    if (horizon === 0 || layers[horizon]) return;
+    let alive = true;
+    fetch(`/api/forecast?h=${horizon}`)
+      .then((r) => r.json())
+      .then((fc) => { if (alive) setLayers((prev) => ({ ...prev, [horizon]: fc })); });
+    return () => { alive = false; };
+  }, [horizon, layers]);
 
   const toggleTier = useCallback((t: Tier) => {
     setVisible((prev) => {
@@ -56,34 +83,49 @@ export default function Dashboard() {
     });
   }, []);
 
+  const risk = layers[horizon] ?? null;
+  const counts = useMemo(() => tierCounts(risk), [risk]);
   const fireCount = fires?.features.length ?? 0;
   const visibleTiers = useMemo(() => Array.from(visible), [visible]);
+  const nCells = risk?.features.length ?? 0;
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
           <span className="dot" />
-          <h1>California Wildfire Risk — Operations Dashboard</h1>
+          <div>
+            <h1>California Wildfire Risk — Operations Dashboard</h1>
+            <div className="subtitle">ML ignition risk · nowcast + 5-day forecast</div>
+          </div>
         </div>
         <div className="status">
-          {meta && (
+          {horizon === 0 ? (
+            meta && (
+              <>
+                <span className={`badge ${meta.mode === "live" ? "live" : "replay"}`}>
+                  {meta.mode === "live" ? "● LIVE" : "REPLAY"}
+                </span>
+                <span>Current conditions <b>{meta.data_date}</b></span>
+                <span>Updated {timeAgo(meta.generated_at)}</span>
+              </>
+            )
+          ) : (
             <>
-              <span className={`badge ${meta.mode === "live" ? "live" : "replay"}`}>
-                {meta.mode === "live" ? "● LIVE" : "REPLAY"}
-              </span>
-              <span>
-                Current conditions <b>{meta.data_date}</b>
-              </span>
-              <span>Updated {timeAgo(meta.generated_at)}</span>
+              <span className="badge forecast">FORECAST +{horizon}d</span>
+              <span>Target <b>{isoDate(horizon)}</b></span>
+              <span>{risk ? `${nCells.toLocaleString()} cells` : "loading…"}</span>
             </>
           )}
         </div>
       </header>
 
       <ControlPanel
-        meta={meta}
+        counts={counts}
+        nCells={nCells}
         fireCount={fireCount}
+        forecast={horizon > 0}
+        meta={meta}
         visible={visible}
         onToggleTier={toggleTier}
       />
@@ -95,9 +137,8 @@ export default function Dashboard() {
           visibleTiers={visibleTiers}
           onSelectCell={setSelected}
         />
-        {selected && (
-          <CellDetail cell={selected} onClose={() => setSelected(null)} />
-        )}
+        <DaySelector horizon={horizon} onSelect={setHorizon} />
+        {selected && <CellDetail cell={selected} onClose={() => setSelected(null)} />}
       </div>
     </div>
   );

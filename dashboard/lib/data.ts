@@ -99,6 +99,54 @@ export async function getRiskGeoJSON(): Promise<FeatureCollection> {
   return readLocal<FeatureCollection>("risk_snapshot.geojson");
 }
 
+/** Forecast choropleth for a horizon (1..5 days ahead), latest run. */
+export async function getForecast(horizon: number): Promise<FeatureCollection> {
+  const sb = getServerSupabase();
+  if (sb) {
+    const { data: latest } = await sb
+      .from("forecast_scores")
+      .select("run_date")
+      .order("run_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest?.run_date) {
+      const PAGE = 1000;
+      const rows: any[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await sb
+          .from("forecast_scores")
+          .select("grid_id, risk, tier, grid_cells(lat_center, lon_center)")
+          .eq("run_date", latest.run_date)
+          .eq("horizon", horizon)
+          .range(from, from + PAGE - 1);
+        if (error || !data || data.length === 0) break;
+        rows.push(...data);
+        if (data.length < PAGE) break;
+      }
+      if (rows.length) {
+        return {
+          type: "FeatureCollection",
+          features: rows.map((r: any) => {
+            const lat = r.grid_cells?.lat_center;
+            const lon = r.grid_cells?.lon_center;
+            return {
+              type: "Feature" as const,
+              geometry: { type: "Polygon", coordinates: cellPolygon(lon, lat) },
+              properties: { grid_id: r.grid_id, risk: r.risk, tier: r.tier, lat, lon },
+            };
+          }),
+        };
+      }
+    }
+  }
+  // Local dev fallback: per-horizon snapshot written by the forecast pipeline.
+  try {
+    return await readLocal<FeatureCollection>(path.join("forecast", `h${horizon}`, "risk_snapshot.geojson"));
+  } catch {
+    return { type: "FeatureCollection", features: [] };
+  }
+}
+
 /**
  * Active fire detections (NASA FIRMS VIIRS NRT) for California, last 24h.
  * Returns an empty collection when no FIRMS key is set.
