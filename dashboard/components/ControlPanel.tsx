@@ -12,13 +12,12 @@ interface Props {
   counts: Record<Tier, number>;
   nCells: number;
   fireCount: number;
-  forecast: boolean;
   meta: RiskMeta | null;
   visible: Set<Tier>;
   onToggleTier: (t: Tier) => void;
 }
 
-export default function ControlPanel({ counts, nCells, fireCount, forecast, meta, visible, onToggleTier }: Props) {
+export default function ControlPanel({ counts, nCells, fireCount, meta, visible, onToggleTier }: Props) {
   const flagged = counts.Red + counts.Yellow;
 
   return (
@@ -67,24 +66,17 @@ export default function ControlPanel({ counts, nCells, fireCount, forecast, meta
 
       <div className="section">
         <h2>How to read this</h2>
-        {forecast ? (
-          <p className="legend-note">
-            <b>Forecast.</b> Each ~10&nbsp;km cell is scored for ignition risk on the
-            selected future day, using forecast weather plus model-reconstructed
-            fire-danger indices. Skill is strongest at 1–2 days and softens further
-            out. Switch to <b>Now</b> for current observed conditions.
-          </p>
-        ) : (
-          <p className="legend-note">
-            Each ~10&nbsp;km cell is scored for next-day ignition risk by a calibrated
-            XGBoost model and binned into recall-targeted tiers: flagging red+yellow
-            catches most fires while keeping the search area manageable. Click any cell
-            for the drivers behind its score; use <b>+1d…+5d</b> for the forecast.
-          </p>
-        )}
-        {meta && !forecast && (
+        <p className="legend-note">
+          A <b>5-day wildfire ignition-risk forecast.</b> Each ~10&nbsp;km cell is
+          scored by a calibrated XGBoost model for the selected day
+          (<b>Today</b> through <b>+5d</b>) and binned into recall-targeted tiers, so
+          flagging red+yellow catches most fires while keeping the search area
+          manageable. Forecast skill is strongest in the near term and softens toward
+          day&nbsp;5. Click any cell for the drivers behind its score.
+        </p>
+        {meta && (
           <p className="legend-note" style={{ marginTop: 8 }}>
-            Updated {new Date(meta.generated_at).toLocaleString()} · source <b>{meta.source}</b>
+            Forecast updated {new Date(meta.generated_at).toLocaleString()}
           </p>
         )}
       </div>

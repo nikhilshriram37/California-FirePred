@@ -95,28 +95,16 @@ export default function Dashboard() {
         <div className="brand">
           <span className="dot" />
           <div>
-            <h1>California Wildfire Risk — Operations Dashboard</h1>
-            <div className="subtitle">ML ignition risk · nowcast + 5-day forecast</div>
+            <h1>California Wildfire Risk — 5-Day Forecast</h1>
+            <div className="subtitle">ML ignition-risk forecast · updated daily</div>
           </div>
         </div>
         <div className="status">
-          {horizon === 0 ? (
-            meta && (
-              <>
-                <span className={`badge ${meta.mode === "live" ? "live" : "replay"}`}>
-                  {meta.mode === "live" ? "● LIVE" : "REPLAY"}
-                </span>
-                <span>Current conditions <b>{meta.data_date}</b></span>
-                <span>Updated {timeAgo(meta.generated_at)}</span>
-              </>
-            )
-          ) : (
-            <>
-              <span className="badge forecast">FORECAST +{horizon}d</span>
-              <span>Target <b>{isoDate(horizon)}</b></span>
-              <span>{risk ? `${nCells.toLocaleString()} cells` : "loading…"}</span>
-            </>
-          )}
+          <span className="badge forecast">5-DAY FORECAST</span>
+          <span>
+            {horizon === 0 ? "Today" : `Day +${horizon}`} <b>{isoDate(horizon)}</b>
+          </span>
+          {meta && <span>Updated {timeAgo(meta.generated_at)}</span>}
         </div>
       </header>
 
@@ -124,7 +112,6 @@ export default function Dashboard() {
         counts={counts}
         nCells={nCells}
         fireCount={fireCount}
-        forecast={horizon > 0}
         meta={meta}
         visible={visible}
         onToggleTier={toggleTier}
