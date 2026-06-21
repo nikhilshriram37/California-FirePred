@@ -8,6 +8,12 @@ import type { FeatureCollection, RiskMeta } from "./types";
 const DATA_DIR = path.join(process.cwd(), "public", "data");
 const CELL_HALF = 0.05; // half of the 0.1-degree grid cell
 
+// Drivers surfaced in the cell click panel (mirror src/pipeline/snapshot.py).
+const DETAIL_FEATURES = [
+  "vpd", "fm100", "dry_streak", "bi_7d", "erc_7d",
+  "tmmx_c", "rmin", "pr_14d", "lightning_count",
+];
+
 function cellPolygon(lon: number, lat: number) {
   return [[
     [lon - CELL_HALF, lat - CELL_HALF], [lon + CELL_HALF, lat - CELL_HALF],
@@ -47,22 +53,43 @@ export async function getRiskGeoJSON(): Promise<FeatureCollection> {
       .limit(1)
       .maybeSingle();
     if (latest?.date) {
-      const { data: rows } = await sb
-        .from("risk_scores")
-        .select("grid_id, risk, tier, grid_cells(lat_center, lon_center)")
-        .eq("date", latest.date);
-      if (rows) {
+      // Supabase caps responses at 1000 rows by default — page through them all.
+      const PAGE = 1000;
+      const pageAll = async (build: (from: number) => any) => {
+        const acc: any[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await build(from).range(from, from + PAGE - 1);
+          if (error || !data || data.length === 0) break;
+          acc.push(...data);
+          if (data.length < PAGE) break;
+        }
+        return acc;
+      };
+
+      const scores = await pageAll((from) =>
+        sb.from("risk_scores")
+          .select("grid_id, risk, tier, grid_cells(lat_center, lon_center)")
+          .eq("date", latest.date));
+
+      // Driver features for the click panel, keyed by grid_id.
+      const featRows = await pageAll((from) =>
+        sb.from("feature_history").select("grid_id, features").eq("date", latest.date));
+      const drivers = new Map<number, Record<string, number>>();
+      for (const r of featRows) drivers.set(r.grid_id, r.features ?? {});
+
+      if (scores.length) {
         return {
           type: "FeatureCollection",
-          features: rows.map((r: any) => {
+          features: scores.map((r: any) => {
             const lat = r.grid_cells?.lat_center;
             const lon = r.grid_cells?.lon_center;
+            const f = drivers.get(r.grid_id) ?? {};
+            const props: Record<string, unknown> = { grid_id: r.grid_id, risk: r.risk, tier: r.tier, lat, lon };
+            for (const k of DETAIL_FEATURES) if (f[k] != null) props[k] = f[k];
             return {
               type: "Feature" as const,
               geometry: { type: "Polygon", coordinates: cellPolygon(lon, lat) },
-              properties: {
-                grid_id: r.grid_id, risk: r.risk, tier: r.tier, lat, lon,
-              },
+              properties: props,
             };
           }),
         };

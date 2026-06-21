@@ -1,6 +1,6 @@
 {
   "data_date": "2026-06-19",
-  "generated_at": "2026-06-20T23:52:30.411373+00:00",
+  "generated_at": "2026-06-21T00:47:44.282529+00:00",
   "source": "live: gridMET + GOES-GLM",
   "mode": "live",
   "model_version": "20260620",
@@ -16,5 +16,5 @@
     "red_recall_target": 0.45,
     "yellow_recall_target": 0.8
   },
-  "lightning_cells": 14
+  "lightning_cells": 20
 }
