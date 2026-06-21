@@ -112,3 +112,39 @@ html, body {
 .fire-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--fire); box-shadow: 0 0 8px var(--fire); }
 
 .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+
+/* ---------------------------------------------------------------------------
+   Mobile (<=768px): stack vertically — map stays the star, controls scroll
+   below it. Desktop layout above is untouched.
+   --------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100dvh;
+  }
+  .topbar {
+    grid-row: 1;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    height: auto;
+    padding: 8px 14px;
+  }
+  .topbar h1 { font-size: 13px; line-height: 1.2; }
+  .status { flex-wrap: wrap; gap: 6px 12px; font-size: 11px; }
+
+  .map-wrap { grid-row: 2; }            /* map takes the flexible middle row */
+
+  .sidebar {
+    grid-row: 3;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    max-height: 38vh;                   /* controls scroll under the map */
+    padding: 12px 14px;
+  }
+  .section { margin-bottom: 16px; }
+
+  /* cell detail spans the width instead of a narrow floating card */
+  .detail { top: 10px; left: 10px; right: 10px; width: auto; }
+}
