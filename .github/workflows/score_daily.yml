@@ -1,0 +1,46 @@
+name: Daily wildfire scoring
+
+# Runs the live pipeline once a day: fetch gridMET + GOES-GLM, score every CA
+# cell, and write risk_scores + feature_history + risk_meta to Supabase. The
+# Vercel dashboard reads those tables, so no redeploy is needed per run.
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 13:00 UTC ≈ 6am Pacific, daily
+  workflow_dispatch: {}     # allow manual runs from the Actions tab
+
+concurrency:
+  group: score-daily
+  cancel-in-progress: false
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: System libs (xgboost OpenMP)
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
+
+      - name: Install live dependencies
+        run: pip install -r requirements-live.txt
+
+      - name: Cache gridMET downloads
+        uses: actions/cache@v4
+        with:
+          path: data/raw/gridmet
+          key: gridmet-${{ github.run_id }}
+          restore-keys: gridmet-
+
+      - name: Score today and write to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NASA_FIRMS_MAP_KEY: ${{ secrets.NASA_FIRMS_MAP_KEY }}
+        run: python -m src.pipeline.score_daily

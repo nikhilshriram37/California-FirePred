@@ -16,7 +16,7 @@ import logging
 
 import pandas as pd
 
-from src.data_acquisition.config import PROCESSED_DIR
+from src.data_acquisition.config import PROCESSED_DIR, REFERENCE_DIR
 from src.data_acquisition.fetch_glm import fetch_glm_lightning
 from src.data_acquisition.fetch_live import dryness_for_month, fetch_gridmet_recent
 from src.models.predict import load_model
@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 def canonical_grid() -> pd.DataFrame:
-    """The cells the model knows, from the historical dataset."""
+    """The cells the model knows. Prefers the small committed reference file
+    (works in the cloud); falls back to the full parquet locally."""
+    ref = REFERENCE_DIR / "grid_cells.json"
+    if ref.exists():
+        return pd.read_json(ref)
     return (
         pd.read_parquet(PROCESSED_DIR / "california_dataset.parquet",
                         columns=["grid_id", "lat_center", "lon_center"])

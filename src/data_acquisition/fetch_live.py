@@ -18,7 +18,7 @@ import logging
 
 import pandas as pd
 
-from src.data_acquisition.config import PROCESSED_DIR, REGIONS
+from src.data_acquisition.config import PROCESSED_DIR, REFERENCE_DIR, REGIONS
 from src.preprocessing.build_dataset import fetch_gridmet_for_grid
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,16 @@ def dryness_for_month(month: int, dataset_path=None) -> pd.DataFrame:
     """Per-cell seasonal normal aet / water_deficit for a calendar month.
 
     Computed from the historical dataset since TerraClimate has no live feed.
+    Prefers the small committed reference file (works in the cloud); falls back to
+    the full parquet locally.
     """
+    ref = REFERENCE_DIR / "dryness_climatology.json"
+    if ref.exists():
+        clim = pd.read_json(ref)
+        clim = clim[clim["month"] == month][["grid_id", "aet", "water_deficit"]].reset_index(drop=True)
+        logger.info("dryness: seasonal normals for month=%s over %s cells (reference)", month, len(clim))
+        return clim
+
     dataset_path = dataset_path or PROCESSED_DIR / "california_dataset.parquet"
     hist = pd.read_parquet(dataset_path, columns=["grid_id", "month", "aet", "water_deficit"])
     clim = (hist[hist["month"] == month]

@@ -12,9 +12,12 @@ DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 EXTERNAL_DIR = DATA_DIR / "external"
+# Small, committed reference files the live pipeline needs in the cloud (the full
+# parquet is gitignored): grid cell coords + seasonal dryness normals.
+REFERENCE_DIR = DATA_DIR / "reference"
 
 # Ensure directories exist
-for d in [RAW_DIR, PROCESSED_DIR, EXTERNAL_DIR]:
+for d in [RAW_DIR, PROCESSED_DIR, EXTERNAL_DIR, REFERENCE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # --- API Keys (loaded from .env) ---
