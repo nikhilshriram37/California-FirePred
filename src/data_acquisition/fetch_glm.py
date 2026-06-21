@@ -16,6 +16,7 @@ import datetime as dt
 import logging
 import os
 import tempfile
+import threading
 
 import boto3
 import numpy as np
@@ -34,6 +35,10 @@ _S3 = boto3.client(
 )
 GLM_BUCKET = "noaa-goes18"  # GOES-West — best view of California
 GLM_PRODUCT = "GLM-L2-LCFA"
+
+# HDF5 (under netCDF4) is not thread-safe — concurrent opens segfault. Downloads
+# run in parallel, but the actual file reads are serialized through this lock.
+_HDF5_LOCK = threading.Lock()
 
 
 def _hour_prefixes(end: dt.datetime, hours: int):
@@ -63,10 +68,11 @@ def _flashes_in_bbox(key: str, bbox: dict) -> tuple[np.ndarray, np.ndarray]:
     try:
         fd, tmp = tempfile.mkstemp(suffix=".nc")
         os.close(fd)
-        _S3.download_file(GLM_BUCKET, key, tmp)
-        ds = xr.open_dataset(tmp)
-        la, lo = ds["flash_lat"].values, ds["flash_lon"].values
-        ds.close()
+        _S3.download_file(GLM_BUCKET, key, tmp)  # parallel I/O
+        with _HDF5_LOCK:                          # serialized HDF5 read
+            ds = xr.open_dataset(tmp)
+            la, lo = ds["flash_lat"].values, ds["flash_lon"].values
+            ds.close()
         m = (la >= bbox["south"]) & (la < bbox["north"]) & (lo >= bbox["west"]) & (lo < bbox["east"])
         return la[m], lo[m]
     except Exception as e:  # a corrupt/missing granule shouldn't sink the run
