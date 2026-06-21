@@ -46,7 +46,7 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<CellProperties | null>(null);
   const [visible, setVisible] = useState<Set<Tier>>(new Set(ALL_TIERS));
 
-  // horizon 0 = now (nowcast); 1..5 = forecast days ahead. Cache layers by horizon.
+  // horizon 0 = today; 1..5 = forecast days ahead. Cache layers by horizon.
   const [horizon, setHorizon] = useState(0);
   const [layers, setLayers] = useState<Record<number, FeatureCollection>>({});
 

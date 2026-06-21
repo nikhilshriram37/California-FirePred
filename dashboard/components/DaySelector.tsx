@@ -18,7 +18,7 @@ export default function DaySelector({
           key={h}
           className={`day-btn ${h === horizon ? "active" : ""}`}
           onClick={() => onSelect(h)}
-          title={h === 0 ? "Current conditions" : `${h}-day forecast`}
+          title={h === 0 ? "Today's forecast" : `${h}-day forecast`}
         >
           {label(h)}
         </button>
