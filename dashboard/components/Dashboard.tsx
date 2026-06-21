@@ -15,6 +15,15 @@ const MapView = dynamic(() => import("./MapView"), {
 
 const ALL_TIERS: Tier[] = ["Red", "Yellow", "Green"];
 
+// "5m ago" / "3h ago" / "2d ago" — conveys how current the assessment is.
+function timeAgo(iso?: string): string {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
 export default function Dashboard() {
   const [meta, setMeta] = useState<RiskMeta | null>(null);
   const [risk, setRisk] = useState<FeatureCollection | null>(null);
@@ -60,15 +69,13 @@ export default function Dashboard() {
         <div className="status">
           {meta && (
             <>
-              <span>
-                Forecast date <b>{meta.data_date}</b>
-              </span>
               <span className={`badge ${meta.mode === "live" ? "live" : "replay"}`}>
-                {meta.mode === "live" ? "LIVE FEED" : "REPLAY"}
+                {meta.mode === "live" ? "● LIVE" : "REPLAY"}
               </span>
               <span>
-                Model <b>{meta.model_version}</b>
+                Current conditions <b>{meta.data_date}</b>
               </span>
+              <span>Updated {timeAgo(meta.generated_at)}</span>
             </>
           )}
         </div>
