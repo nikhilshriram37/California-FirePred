@@ -50,7 +50,21 @@ npm install --prefix dashboard && npm run dev --prefix dashboard
 Without Supabase env vars the dashboard serves the committed snapshot and the
 scorer skips persistence — everything still runs.
 
-## Retraining loop (later)
-`feature_history` accumulates daily. Periodically: pull it, backfill `has_fire`
-from fire records, concat with the historical parquet, re-run `src.models.train`,
-and upload the new artifacts. Spatial CV + MERRA-2 PM2.5 fold in here.
+## Retraining loop
+Two scheduled jobs build the growing, labeled dataset:
+- **`score_daily.yml`** (13:00 UTC) — writes each day's features + prediction to
+  `feature_history` / `risk_scores`.
+- **`backfill_labels.yml`** (15:00 UTC) — re-labels the trailing 7 days: queries
+  FIRMS for fires that actually occurred, sets `feature_history.has_fire`
+  (the prediction-vs-reality outcome), and archives detections to `active_fires`.
+  The 7-day window catches late/corrected FIRMS detections. Run manually:
+  `python -m src.pipeline.backfill_labels --days 7`.
+
+Then, weekly/biweekly: pull the labeled `feature_history`, concat with the historical
+parquet, re-run `src.models.train`, and upload new artifacts. Spatial CV + MERRA-2
+PM2.5 fold in here.
+
+**Label source note:** the original model trained on FPA-FOD official ignition
+records; this operational loop labels with FIRMS active-fire detections (the only
+near-real-time ground truth). Slightly different definition — good for monitoring +
+retraining; reconcile with CAL FIRE / NIFC incident records for higher fidelity later.

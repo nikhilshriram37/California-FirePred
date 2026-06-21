@@ -1,0 +1,38 @@
+name: Backfill fire labels
+
+# Closes the prediction -> outcome loop. Each day, re-labels the trailing 7 days of
+# feature_history with what FIRMS actually detected (has_fire), and archives the raw
+# detections. The 7-day window catches late-arriving / corrected FIRMS detections.
+# This is the ground truth the weekly/biweekly retrain consumes.
+
+on:
+  schedule:
+    - cron: "0 15 * * *"   # 15:00 UTC — after the daily scoring job (13:00 UTC)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Trailing days to re-label"
+        default: "7"
+
+concurrency:
+  group: backfill-labels
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: pip install pandas numpy requests supabase python-dotenv
+      - name: Backfill labels from FIRMS
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NASA_FIRMS_MAP_KEY: ${{ secrets.NASA_FIRMS_MAP_KEY }}
+        run: python -m src.pipeline.backfill_labels --days ${{ github.event.inputs.days || '7' }}
