@@ -1,0 +1,49 @@
+# Data (keep the small CA boundary the live pipeline needs)
+data/raw/
+data/processed/
+data/external/*
+!data/external/california_boundary.geojson
+*.csv
+*.parquet
+*.h5
+*.hdf5
+*.nc
+*.tif
+*.geotiff
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+
+# Local backups + local Claude settings
+.backups/
+.claude/settings.local.json

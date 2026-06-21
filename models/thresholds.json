@@ -1,0 +1,6 @@
+{
+  "red": 0.02018163539469242,
+  "yellow": 0.004928420763462782,
+  "red_recall_target": 0.45,
+  "yellow_recall_target": 0.8
+}
