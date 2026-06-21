@@ -54,17 +54,22 @@ scorer skips persistence — everything still runs.
 Two scheduled jobs build the growing, labeled dataset:
 - **`score_daily.yml`** (13:00 UTC) — writes each day's features + prediction to
   `feature_history` / `risk_scores`.
-- **`backfill_labels.yml`** (15:00 UTC) — re-labels the trailing 7 days: queries
-  FIRMS for fires that actually occurred, sets `feature_history.has_fire`
-  (the prediction-vs-reality outcome), and archives detections to `active_fires`.
-  The 7-day window catches late/corrected FIRMS detections. Run manually:
-  `python -m src.pipeline.backfill_labels --days 7`.
+- **`backfill_labels.yml`** (15:00 UTC) — re-labels the trailing 7 days by fusing
+  three fire sources: **IRWIN/WFIGS** + **CAL FIRE** (confirmed incidents, primary)
+  and **NASA FIRMS** (satellite heat, supplementary recall). Sets
+  `feature_history.has_fire` (prediction-vs-reality outcome) and `label_source`
+  (which source(s) confirmed each cell), and archives FIRMS detections to
+  `active_fires`. The 7-day window catches late-arriving incidents/detections.
+  Run manually: `python -m src.pipeline.backfill_labels --days 7`.
 
 Then, weekly/biweekly: pull the labeled `feature_history`, concat with the historical
 parquet, re-run `src.models.train`, and upload new artifacts. Spatial CV + MERRA-2
 PM2.5 fold in here.
 
-**Label source note:** the original model trained on FPA-FOD official ignition
-records; this operational loop labels with FIRMS active-fire detections (the only
-near-real-time ground truth). Slightly different definition — good for monitoring +
-retraining; reconcile with CAL FIRE / NIFC incident records for higher fidelity later.
+**Label fidelity:** the model trained on FPA-FOD official ignitions. The loop now
+labels primarily from confirmed incident records — **IRWIN/WFIGS** (interagency,
+FPA-FOD-aligned: discovery date, location, cause, size) and **CAL FIRE** — which
+match the training definition far better than heat detection. **FIRMS** is kept as a
+supplementary detector for small/unreported fires. `label_source` lets retraining
+prefer confirmed labels or weight them above FIRMS-only ones. For periodic
+high-fidelity benchmarking, use FPA-FOD updates + MTBS perimeters.
