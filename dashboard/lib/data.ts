@@ -147,6 +147,54 @@ export async function getForecast(horizon: number): Promise<FeatureCollection> {
   }
 }
 
+export interface ForecastInfo {
+  run_date: string | null;
+  generated_at: string | null;
+  /** horizon (0..5) -> real target date (YYYY-MM-DD, Pacific) */
+  dates: Record<number, string>;
+}
+
+/** Real target dates + freshness for the latest forecast run (so the UI shows
+ *  the dates the data is actually for, not a client-computed today+N). */
+export async function getForecastInfo(): Promise<ForecastInfo> {
+  const sb = getServerSupabase();
+  if (sb) {
+    const { data: latest } = await sb
+      .from("forecast_scores")
+      .select("run_date")
+      .order("run_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest?.run_date) {
+      const { data: rows } = await sb
+        .from("forecast_scores")
+        .select("horizon, target_date")
+        .eq("run_date", latest.run_date);
+      const dates: Record<number, string> = {};
+      for (const r of rows ?? []) dates[r.horizon] = r.target_date;
+      // Freshness: the daily run timestamp (nowcast + forecast run together).
+      const { data: meta } = await sb
+        .from("risk_meta").select("generated_at")
+        .order("generated_at", { ascending: false }).limit(1).maybeSingle();
+      return { run_date: latest.run_date, generated_at: meta?.generated_at ?? null, dates };
+    }
+  }
+  // Local dev fallback: read each horizon's meta.json.
+  const dates: Record<number, string> = {};
+  let generated_at: string | null = null;
+  let run_date: string | null = null;
+  for (let h = 0; h <= 5; h++) {
+    try {
+      const m = await readLocal<RiskMeta & { horizon: number; run_date: string }>(
+        path.join("forecast", `h${h}`, "meta.json"));
+      dates[h] = m.data_date;
+      generated_at = m.generated_at;
+      run_date = (m as any).run_date ?? run_date;
+    } catch { /* horizon not present locally */ }
+  }
+  return { run_date, generated_at, dates };
+}
+
 /**
  * Active fire detections (NASA FIRMS VIIRS NRT) for California, last 24h.
  * Returns an empty collection when no FIRMS key is set.

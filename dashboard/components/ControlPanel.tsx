@@ -1,6 +1,6 @@
 "use client";
 
-import { TIER_COLORS, type RiskMeta, type Tier } from "@/lib/types";
+import { TIER_COLORS, type Tier } from "@/lib/types";
 
 const TIERS: { tier: Tier; label: string; desc: string }[] = [
   { tier: "Red", label: "High risk", desc: "≥45% of fires" },
@@ -12,14 +12,52 @@ interface Props {
   counts: Record<Tier, number>;
   nCells: number;
   fireCount: number;
-  meta: RiskMeta | null;
+  firesMode: boolean;
+  generatedAt: string | null;
   visible: Set<Tier>;
   onToggleTier: (t: Tier) => void;
 }
 
-export default function ControlPanel({ counts, nCells, fireCount, meta, visible, onToggleTier }: Props) {
+export default function ControlPanel({
+  counts, nCells, fireCount, firesMode, generatedAt, visible, onToggleTier,
+}: Props) {
   const flagged = counts.Red + counts.Yellow;
 
+  // --- Active-fires mode: observations only, no risk model ---
+  if (firesMode) {
+    return (
+      <aside className="sidebar">
+        <div className="section">
+          <h2>Active wildfires</h2>
+          <div className="stat-grid">
+            <div className="stat">
+              <div className="v" style={{ color: "var(--fire)" }}>{fireCount.toLocaleString()}</div>
+              <div className="k">detections (last 48h)</div>
+            </div>
+          </div>
+          <div className="fire-legend">
+            <span className="fire-dot" /> live VIIRS / MODIS satellite detection
+          </div>
+        </div>
+
+        <div className="section">
+          <h2>How to read this</h2>
+          <p className="legend-note">
+            Live <b>active-fire detections</b> from NASA FIRMS — satellite-sensed heat
+            signatures over the last 48&nbsp;hours, across three satellites. These are
+            <b> observations of fires happening now</b>, not the model&apos;s prediction.
+            Switch to <b>Today</b> or <b>+1d…+5d</b> for the ignition-risk forecast.
+          </p>
+          <p className="legend-note" style={{ marginTop: 8 }}>
+            Note: detections can include very hot industrial or agricultural sources,
+            not only wildfires.
+          </p>
+        </div>
+      </aside>
+    );
+  }
+
+  // --- Forecast modes (Today / +1..+5): risk overlay ---
   return (
     <aside className="sidebar">
       <div className="section">
@@ -47,20 +85,17 @@ export default function ControlPanel({ counts, nCells, fireCount, meta, visible,
             <div className="k">cells flagged (red+yellow)</div>
           </div>
           <div className="stat">
-            <div className="v" style={{ color: "var(--fire)" }}>{fireCount.toLocaleString()}</div>
-            <div className="k">active fire detections (48h)</div>
+            <div className="v">{flagged && nCells ? Math.round((flagged / nCells) * 100) : 0}%</div>
+            <div className="k">of state flagged</div>
           </div>
           <div className="stat">
             <div className="v">{nCells.toLocaleString()}</div>
             <div className="k">grid cells scored</div>
           </div>
           <div className="stat">
-            <div className="v">{flagged && nCells ? Math.round((flagged / nCells) * 100) : 0}%</div>
-            <div className="k">of state flagged</div>
+            <div className="v" style={{ color: "var(--fire)" }}>{fireCount.toLocaleString()}</div>
+            <div className="k">active fires (see 🔥 tab)</div>
           </div>
-        </div>
-        <div className="fire-legend">
-          <span className="fire-dot" /> live VIIRS satellite fire detection
         </div>
       </div>
 
@@ -74,9 +109,10 @@ export default function ControlPanel({ counts, nCells, fireCount, meta, visible,
           manageable. Forecast skill is strongest in the near term and softens toward
           day&nbsp;5. Click any cell for the drivers behind its score.
         </p>
-        {meta && (
+        {generatedAt && (
           <p className="legend-note" style={{ marginTop: 8 }}>
-            Forecast updated {new Date(meta.generated_at).toLocaleString()}
+            Forecast updated{" "}
+            {new Date(generatedAt).toLocaleString("en-US", { timeZone: "America/Los_Angeles" })} PT
           </p>
         )}
       </div>

@@ -6,9 +6,9 @@ import dynamic from "next/dynamic";
 import ControlPanel from "./ControlPanel";
 import CellDetail from "./CellDetail";
 import DaySelector from "./DaySelector";
-import type { CellProperties, FeatureCollection, RiskMeta, Tier } from "@/lib/types";
+import { dayDiff, formatMD, pacificToday, relLabel, timeAgo } from "@/lib/dates";
+import type { CellProperties, FeatureCollection, Tier } from "@/lib/types";
 
-// MapLibre touches `window`, so load the map only on the client.
 const MapView = dynamic(() => import("./MapView"), {
   ssr: false,
   loading: () => <div className="loading">Loading map…</div>,
@@ -16,19 +16,10 @@ const MapView = dynamic(() => import("./MapView"), {
 
 const ALL_TIERS: Tier[] = ["Red", "Yellow", "Green"];
 
-// "5m ago" / "3h ago" / "2d ago" — conveys how current the assessment is.
-function timeAgo(iso?: string): string {
-  if (!iso) return "";
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
-
-function isoDate(daysAhead: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + daysAhead);
-  return d.toISOString().slice(0, 10);
+interface ForecastInfo {
+  run_date: string | null;
+  generated_at: string | null;
+  dates: Record<number, string>;
 }
 
 function tierCounts(fc: FeatureCollection | null): Record<Tier, number> {
@@ -41,33 +32,33 @@ function tierCounts(fc: FeatureCollection | null): Record<Tier, number> {
 }
 
 export default function Dashboard() {
-  const [meta, setMeta] = useState<RiskMeta | null>(null);
+  const [info, setInfo] = useState<ForecastInfo | null>(null);
   const [fires, setFires] = useState<FeatureCollection | null>(null);
   const [selected, setSelected] = useState<CellProperties | null>(null);
   const [visible, setVisible] = useState<Set<Tier>>(new Set(ALL_TIERS));
 
-  // horizon 0 = today; 1..5 = forecast days ahead. Cache layers by horizon.
+  // horizon -1 = active fires; 0 = today; 1..5 = forecast days ahead.
   const [horizon, setHorizon] = useState(0);
   const [layers, setLayers] = useState<Record<number, FeatureCollection>>({});
 
   useEffect(() => {
     let alive = true;
     Promise.all([
-      fetch("/api/meta").then((r) => r.json()),
-      fetch("/api/risk").then((r) => r.json()),
+      fetch("/api/forecast/info").then((r) => r.json()),
+      fetch("/api/forecast?h=0").then((r) => r.json()),
       fetch("/api/fires").then((r) => r.json()),
-    ]).then(([m, rk, fr]) => {
+    ]).then(([inf, f0, fr]) => {
       if (!alive) return;
-      setMeta(m);
-      setLayers((prev) => ({ ...prev, 0: rk }));
+      setInfo(inf);
+      setLayers((prev) => ({ ...prev, 0: f0 }));
       setFires(fr);
     });
     return () => { alive = false; };
   }, []);
 
-  // Lazily fetch a forecast horizon the first time it's selected.
+  // Lazily fetch a forecast horizon (1..5) the first time it's selected.
   useEffect(() => {
-    if (horizon === 0 || layers[horizon]) return;
+    if (horizon <= 0 || layers[horizon]) return;
     let alive = true;
     fetch(`/api/forecast?h=${horizon}`)
       .then((r) => r.json())
@@ -83,11 +74,21 @@ export default function Dashboard() {
     });
   }, []);
 
-  const risk = layers[horizon] ?? null;
+  const selectHorizon = useCallback((h: number) => {
+    setHorizon(h);
+    setSelected(null);
+  }, []);
+
+  const today = pacificToday();
+  const firesMode = horizon === -1;
+  const risk = firesMode ? null : (layers[horizon] ?? null);
+  const displayedFires = firesMode ? fires : null;
   const counts = useMemo(() => tierCounts(risk), [risk]);
   const fireCount = fires?.features.length ?? 0;
   const visibleTiers = useMemo(() => Array.from(visible), [visible]);
   const nCells = risk?.features.length ?? 0;
+  const dates = info?.dates ?? {};
+  const activeDate = dates[horizon];
 
   return (
     <div className="app">
@@ -96,15 +97,26 @@ export default function Dashboard() {
           <span className="dot" />
           <div>
             <h1>California Wildfire Risk — 5-Day Forecast</h1>
-            <div className="subtitle">ML ignition-risk forecast · updated daily</div>
+            <div className="subtitle">ML ignition-risk forecast · updated daily ~6am PT</div>
           </div>
         </div>
         <div className="status">
-          <span className="badge forecast">5-DAY FORECAST</span>
-          <span>
-            {horizon === 0 ? "Today" : `Day +${horizon}`} <b>{isoDate(horizon)}</b>
-          </span>
-          {meta && <span>Updated {timeAgo(meta.generated_at)}</span>}
+          {firesMode ? (
+            <>
+              <span className="badge fires">🔥 ACTIVE FIRES</span>
+              <span><b>{fireCount.toLocaleString()}</b> detections · last 48h</span>
+              <span>NASA FIRMS satellite</span>
+            </>
+          ) : (
+            <>
+              <span className="badge forecast">FORECAST</span>
+              <span>
+                {activeDate ? relLabel(dayDiff(activeDate, today)) : `Day +${horizon}`}
+                {" · "}<b>{formatMD(activeDate)}</b>
+              </span>
+              <span>Updated {timeAgo(info?.generated_at)}</span>
+            </>
+          )}
         </div>
       </header>
 
@@ -112,7 +124,8 @@ export default function Dashboard() {
         counts={counts}
         nCells={nCells}
         fireCount={fireCount}
-        meta={meta}
+        firesMode={firesMode}
+        generatedAt={info?.generated_at ?? null}
         visible={visible}
         onToggleTier={toggleTier}
       />
@@ -120,11 +133,11 @@ export default function Dashboard() {
       <div className="map-wrap">
         <MapView
           risk={risk}
-          fires={fires}
+          fires={displayedFires}
           visibleTiers={visibleTiers}
           onSelectCell={setSelected}
         />
-        <DaySelector horizon={horizon} onSelect={setHorizon} />
+        <DaySelector horizon={horizon} dates={dates} today={today} onSelect={selectHorizon} />
         {selected && <CellDetail cell={selected} onClose={() => setSelected(null)} />}
       </div>
     </div>

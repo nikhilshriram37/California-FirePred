@@ -34,7 +34,7 @@ BATCH = 150
 COARSE = 0.25  # forecast-grid resolution; the underlying model is ~25km native anyway
 
 
-def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: int) -> list[dict]:
+def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: int, tz: str) -> list[dict]:
     """Fetch Open-Meteo daily forecast for points, batched + throttled with retry."""
     locs: list[dict] = []
     for s in range(0, len(lats), BATCH):
@@ -42,7 +42,7 @@ def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: in
             "latitude": ",".join(f"{v:.4f}" for v in lats[s:s + BATCH]),
             "longitude": ",".join(f"{v:.4f}" for v in lons[s:s + BATCH]),
             "daily": ",".join(DAILY), "past_days": past_days,
-            "forecast_days": days, "timezone": "UTC", "wind_speed_unit": "ms",
+            "forecast_days": days, "timezone": tz, "wind_speed_unit": "ms",
         }
         for attempt in range(4):
             r = requests.get(OPEN_METEO, params=params, timeout=120)
@@ -59,12 +59,15 @@ def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: in
     return locs
 
 
-def fetch_forecast(grid: pd.DataFrame, days: int = 7, past_days: int = 0) -> pd.DataFrame:
+def fetch_forecast(grid: pd.DataFrame, days: int = 7, past_days: int = 0,
+                   tz: str = "America/Los_Angeles") -> pd.DataFrame:
     """Return a tidy forecast panel: grid_id, date, tmmx_c, rmin, vs, pr, vpd.
 
-    Cells are mapped to a coarse 0.25-degree forecast grid (each distinct coarse
-    point fetched once) to stay well within Open-Meteo's rate limits. ``past_days``
-    also returns recent days (used to bridge gridMET's publishing lag).
+    Daily values are aggregated to ``tz`` calendar days (Pacific by default, so
+    dates align to the California audience). Cells are mapped to a coarse
+    0.25-degree forecast grid (each distinct coarse point fetched once) to stay
+    within Open-Meteo's rate limits. ``past_days`` also returns recent days (used
+    to bridge gridMET's publishing lag).
     """
     cells = grid[["grid_id", "lat_center", "lon_center"]].copy()
     cells["clat"] = (np.round(cells["lat_center"] / COARSE) * COARSE).round(4)
@@ -72,7 +75,7 @@ def fetch_forecast(grid: pd.DataFrame, days: int = 7, past_days: int = 0) -> pd.
     pts = cells[["clat", "clon"]].drop_duplicates().reset_index(drop=True)
     logger.info("forecast: %s cells -> %s coarse points", len(cells), len(pts))
 
-    locs = _fetch_points(pts["clat"].tolist(), pts["clon"].tolist(), days, past_days)
+    locs = _fetch_points(pts["clat"].tolist(), pts["clon"].tolist(), days, past_days, tz)
 
     # Build per-coarse-point frames, keyed by (clat, clon).
     by_pt = {}

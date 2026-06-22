@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 from src.data_acquisition.fetch_forecast import fetch_forecast
 from src.data_acquisition.fetch_live import dryness_for_month, fetch_gridmet_recent
@@ -64,22 +67,24 @@ def _emulate_forecast_days(grid, obs, fc, fdays):
 
 def run_forecast(horizons: int = 5, persist: bool = True, write: bool = True) -> list[dict]:
     grid = canonical_grid()
-    today = date.today()
+    # "Today" is the California (Pacific) calendar day, so dates match the audience.
+    pac_today = datetime.now(PACIFIC).date()
 
     # 1. observed gridMET (raw 8 vars) up to the latest published day
     obs = fetch_gridmet_recent(grid, days=21)
     obs["date"] = pd.to_datetime(obs["date"])
     d_obs = obs["date"].max()
 
-    # 2. forecast weather, bridging the gap from d_obs to today+horizons
-    need_ahead = (today - d_obs.date()).days + horizons + 1
-    fc = fetch_forecast(grid, days=need_ahead, past_days=4)
+    # 2. forecast weather (Pacific days), bridging the gap from d_obs to today+H
+    gap = max(0, (pac_today - d_obs.date()).days)
+    fc = fetch_forecast(grid, days=horizons + 1, past_days=max(5, gap + 2))
     fc["date"] = pd.to_datetime(fc["date"])
 
-    target_dates = [pd.Timestamp(today + timedelta(days=h)) for h in range(1, horizons + 1)]
+    # Contiguous targets: today (h=0) through +H, all real Pacific dates.
+    target_dates = [pd.Timestamp(pac_today + timedelta(days=h)) for h in range(0, horizons + 1)]
     fdays = sorted(d for d in fc["date"].unique() if d > d_obs and d <= max(target_dates))
-    logger.info("observed thru %s; emulating %d forecast days -> targets %s..%s",
-                d_obs.date(), len(fdays), target_dates[0].date(), target_dates[-1].date())
+    logger.info("observed thru %s; pac_today=%s; emulating %d days -> targets %s..%s",
+                d_obs.date(), pac_today, len(fdays), target_dates[0].date(), target_dates[-1].date())
 
     # 3. emulate indices for forecast days, then stitch a continuous raw panel
     fdf = _emulate_forecast_days(grid, obs, fc, fdays)
@@ -92,13 +97,13 @@ def run_forecast(horizons: int = 5, persist: bool = True, write: bool = True) ->
 
     model = load_model()
     results = []
-    for h, td in enumerate(target_dates, start=1):
+    for h, td in enumerate(target_dates):  # h = 0..horizons
         day, _ = build_live_features(grid, panel, dryness, lightning_zero, target_date=td)
         day = day.join(model.predict(day))
         geojson = day_to_feature_collection(day)
         meta = build_meta(day, td.strftime("%Y-%m-%d"), mode="forecast",
                           source="forecast: Open-Meteo + emulated fire-danger",
-                          horizon=h, run_date=today.isoformat())
+                          horizon=h, run_date=pac_today.isoformat())
         if write:
             write_snapshot(geojson, meta, SNAPSHOT_DIR / "forecast" / f"h{h}")
         if persist:
