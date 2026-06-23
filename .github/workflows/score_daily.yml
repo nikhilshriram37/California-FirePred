@@ -6,7 +6,12 @@ name: Daily wildfire scoring
 
 on:
   schedule:
-    - cron: "0 13 * * *"   # 13:00 UTC ≈ 6am Pacific, daily
+    # Twice daily (13:00 + 21:00 UTC ≈ 6am + 2pm Pacific) so a failed or
+    # GitHub-delayed morning slot self-heals in the afternoon. The forecast
+    # upserts on (run_date, grid_id, horizon), so a second same-day run just
+    # refreshes the data — idempotent.
+    - cron: "0 13 * * *"
+    - cron: "0 21 * * *"
   workflow_dispatch: {}     # allow manual runs from the Actions tab
 
 concurrency:

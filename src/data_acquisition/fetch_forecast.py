@@ -44,17 +44,25 @@ def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: in
             "daily": ",".join(DAILY), "past_days": past_days,
             "forecast_days": days, "timezone": tz, "wind_speed_unit": "ms",
         }
-        for attempt in range(4):
-            r = requests.get(OPEN_METEO, params=params, timeout=120)
-            if r.status_code == 429:
-                time.sleep(8 * (attempt + 1))
-                continue
-            r.raise_for_status()
-            payload = r.json()
-            locs.extend(payload if isinstance(payload, list) else [payload])
-            break
+        last_err: Exception | None = None
+        for attempt in range(6):
+            try:
+                # (connect, read) timeout: a stalled batch fails at 45s and retries
+                # rather than blocking, and timeouts are retried (not just 429s).
+                r = requests.get(OPEN_METEO, params=params, timeout=(10, 45))
+                if r.status_code == 429:
+                    time.sleep(8 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                payload = r.json()
+                locs.extend(payload if isinstance(payload, list) else [payload])
+                break
+            except requests.exceptions.RequestException as e:
+                last_err = e  # timeout / connection reset / transient 5xx -> back off
+                logger.warning("Open-Meteo batch retry %d: %s", attempt + 1, str(e)[:80])
+                time.sleep(5 * (attempt + 1))
         else:
-            raise RuntimeError("Open-Meteo rate-limited after retries")
+            raise RuntimeError(f"Open-Meteo failed after retries: {last_err}")
         time.sleep(1)
     return locs
 
