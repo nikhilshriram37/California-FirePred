@@ -166,12 +166,19 @@ export async function getForecastInfo(): Promise<ForecastInfo> {
       .limit(1)
       .maybeSingle();
     if (latest?.run_date) {
-      const { data: rows } = await sb
-        .from("forecast_scores")
-        .select("horizon, target_date")
-        .eq("run_date", latest.run_date);
+      // One row per horizon (a plain select hits the 1000-row cap — 13k+ rows
+      // per run — and would only return horizon 0).
       const dates: Record<number, string> = {};
-      for (const r of rows ?? []) dates[r.horizon] = r.target_date;
+      for (let h = 0; h <= 5; h++) {
+        const { data } = await sb
+          .from("forecast_scores")
+          .select("target_date")
+          .eq("run_date", latest.run_date)
+          .eq("horizon", h)
+          .limit(1)
+          .maybeSingle();
+        if (data?.target_date) dates[h] = data.target_date;
+      }
       // Freshness: the daily run timestamp (nowcast + forecast run together).
       const { data: meta } = await sb
         .from("risk_meta").select("generated_at")
