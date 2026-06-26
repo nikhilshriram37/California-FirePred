@@ -31,7 +31,11 @@ RENAME = {
     "vapour_pressure_deficit_max": "vpd",
 }
 BATCH = 150
-COARSE = 0.25  # forecast-grid resolution; the underlying model is ~25km native anyway
+# Forecast-grid resolution. Coarser than the risk grid on purpose: Open-Meteo is
+# flaky from CI, and 0.5deg cuts the request count ~4x (the biggest reliability
+# lever). The underlying forecast model is ~25km native, so a multi-day forecast
+# loses little to ~50km sampling.
+COARSE = 0.5
 
 
 def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: int, tz: str) -> list[dict]:
@@ -47,9 +51,9 @@ def _fetch_points(lats: list[float], lons: list[float], days: int, past_days: in
         last_err: Exception | None = None
         for attempt in range(6):
             try:
-                # (connect, read) timeout: a stalled batch fails at 45s and retries
-                # rather than blocking, and timeouts are retried (not just 429s).
-                r = requests.get(OPEN_METEO, params=params, timeout=(10, 45))
+                # (connect, read) timeout: generous connect for Open-Meteo's slow
+                # TLS handshakes from CI; timeouts are retried (not just 429s).
+                r = requests.get(OPEN_METEO, params=params, timeout=(30, 60))
                 if r.status_code == 429:
                     time.sleep(8 * (attempt + 1))
                     continue
