@@ -36,12 +36,8 @@ jobs:
       - name: Install live dependencies
         run: pip install -r requirements-live.txt
 
-      - name: Cache gridMET downloads
-        uses: actions/cache@v4
-        with:
-          path: data/raw/gridmet
-          key: gridmet-${{ github.run_id }}
-          restore-keys: gridmet-
+      # NOTE: no gridMET cache — the current-year file grows daily, so caching it
+      # froze the latest available day. The pipeline re-downloads it each run.
 
       - name: Score today and write to Supabase
         env:

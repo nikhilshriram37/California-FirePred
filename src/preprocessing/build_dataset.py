@@ -186,6 +186,7 @@ def fetch_gridmet_for_grid(
     year: int,
     variables: list[str] | None = None,
     bbox: dict | None = None,
+    refresh_current: bool = False,
 ) -> pd.DataFrame:
     """Fetch gridMET data as a spatial block and map to grid cells.
 
@@ -198,10 +199,17 @@ def fetch_gridmet_for_grid(
         year: Year to fetch.
         variables: gridMET variable names.
         bbox: Bounding box for spatial subsetting.
+        refresh_current: Re-download the file when ``year`` is the current
+            calendar year. The current-year gridMET file grows daily, so a
+            cached copy goes stale — live scoring must re-fetch it or it
+            silently keeps re-scoring an old day. Historical years are final,
+            so they stay cached.
 
     Returns:
         DataFrame with columns: grid_id, date, and one column per variable.
     """
+    import datetime as _dt
+    is_current_year = year == _dt.date.today().year
     variables = variables or ["tmmx", "rmin", "vs", "pr", "erc", "vpd", "fm100", "bi"]
 
     if not bbox:
@@ -220,8 +228,12 @@ def fetch_gridmet_for_grid(
     for var in variables:
         local_path = cache_dir / f"{var}_{year}.nc"
 
-        # Download if not cached
-        if not local_path.exists():
+        # Download if missing, or if it's the current (still-growing) year and a
+        # refresh was requested — otherwise a stale cache freezes the latest day.
+        stale = refresh_current and is_current_year and local_path.exists()
+        if not local_path.exists() or stale:
+            if stale:
+                logger.info(f"Refreshing current-year {local_path.name} (was stale)")
             url = f"https://www.northwestknowledge.net/metdata/data/{var}_{year}.nc"
             logger.info(f"Downloading gridMET {var}_{year}.nc (~25-80MB)...")
             resp = req.get(url, stream=True, timeout=300)

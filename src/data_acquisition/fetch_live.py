@@ -36,7 +36,10 @@ def fetch_gridmet_recent(grid: pd.DataFrame, days: int = 21,
     bbox = REGIONS["california"]
     year = (end_date or dt.date.today()).year
 
-    frames = [fetch_gridmet_for_grid(grid, year, variables=GRIDMET_VARS, bbox=bbox)]
+    # refresh_current=True: the current-year file grows daily, so always re-fetch
+    # it (a stale cache would freeze the latest available day).
+    frames = [fetch_gridmet_for_grid(grid, year, variables=GRIDMET_VARS, bbox=bbox,
+                                     refresh_current=True)]
     cur = pd.to_datetime(frames[0]["date"])
     cutoff = pd.Timestamp(end_date) if end_date else cur.max()
     start = cutoff - pd.Timedelta(days=days + 5)
