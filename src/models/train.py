@@ -30,7 +30,7 @@ from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 
 from src.data_acquisition.config import PROCESSED_DIR, PROJECT_ROOT
-from src.models.features import FEATURE_COLS, TARGET_COL, select_features
+from src.models.features import FEATURE_COLS, TARGET_COL, merge_static_features, select_features
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> di
     logger.info("Loading %s", dataset_path)
     df = pd.read_parquet(dataset_path)
     df["date"] = pd.to_datetime(df["date"])
+    df = merge_static_features(df)  # topography + human-exposure (per-cell, static)
 
     train_df = df[df["date"].dt.year.isin(TRAIN_YEARS)]
     test_df = df[df["date"].dt.year == TEST_YEAR]

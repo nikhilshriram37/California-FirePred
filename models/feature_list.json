@@ -26,5 +26,11 @@
   "vpd_change_3d",
   "month",
   "month_sin",
-  "doy_cos"
+  "doy_cos",
+  "elev_mean",
+  "ruggedness",
+  "slope_deg",
+  "northness",
+  "eastness",
+  "log_pop"
 ]

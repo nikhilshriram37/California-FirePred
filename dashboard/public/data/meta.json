@@ -1,20 +1,20 @@
 {
-  "data_date": "2026-07-04",
-  "generated_at": "2026-07-06T13:57:10.140087+00:00",
+  "data_date": "2026-07-06",
+  "generated_at": "2026-07-07T23:15:50.590238+00:00",
   "source": "live: gridMET + GOES-GLM",
   "mode": "live",
-  "model_version": "20260620",
+  "model_version": "20260707",
   "n_cells": 2304,
   "tier_counts": {
-    "Red": 372,
-    "Yellow": 645,
-    "Green": 1287
+    "Red": 115,
+    "Yellow": 472,
+    "Green": 1717
   },
   "thresholds": {
-    "red": 0.02018163539469242,
-    "yellow": 0.004928420763462782,
+    "red": 0.04946523904800415,
+    "yellow": 0.006447310093790293,
     "red_recall_target": 0.45,
     "yellow_recall_target": 0.8
   },
-  "lightning_cells": 34
+  "lightning_cells": 7
 }

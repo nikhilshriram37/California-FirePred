@@ -12,6 +12,7 @@ import logging
 
 import pandas as pd
 
+from src.models.features import merge_static_features
 from src.preprocessing.build_dataset import engineer_features
 from src.pipeline.geo import filter_to_california
 
@@ -54,6 +55,8 @@ def build_live_features(
     # Apply same-day lightning from GOES-GLM (0 where no flashes).
     day = day.drop(columns=["lightning_count"], errors="ignore").merge(lightning, on="grid_id", how="left")
     day["lightning_count"] = day["lightning_count"].fillna(0).astype(int)
+
+    day = merge_static_features(day)  # topography + human-exposure (per-cell, static)
 
     before = len(day)
     day = filter_to_california(day)

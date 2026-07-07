@@ -8,9 +8,9 @@ unchanged for live scoring — this module only fixes *which* columns, and in wh
 order, are handed to the model.
 """
 
-from __future__ import annotations
-
 import pandas as pd
+
+from src.data_acquisition.config import REFERENCE_DIR
 
 # Identifiers + fire outcomes that must never be fed to the model.
 ID_COLS: list[str] = ["grid_id", "date"]
@@ -18,17 +18,31 @@ TARGET_COL: str = "has_fire"
 LEAK_COLS: list[str] = ["fire_count", "total_acres"]  # fire outcomes -> label leakage
 DROP_COLS: list[str] = [*ID_COLS, TARGET_COL, *LEAK_COLS]
 
-# The exact 28 model features, in a fixed, serialization-stable order. Mirrors the
-# columns of data/processed/california_dataset.parquet with DROP_COLS removed —
-# i.e. the same list the notebook built via ``[c for c in df.columns if c not in
-# drop_cols]``. Order matters: XGBoost validates feature names/order at predict.
+# Static, per-cell features (constant over time): topography + human exposure.
+# Sourced offline into data/reference/static_features.json (scripts/build_*.py) and
+# merged by grid_id in both training and serving via merge_static_features().
+STATIC_FEATURES: list[str] = [
+    "elev_mean", "ruggedness", "slope_deg", "northness", "eastness", "log_pop",
+]
+
+# The full model feature set, in a fixed, serialization-stable order. The first 28
+# are the weather/fuel/temporal features engineered by engineer_features; the static
+# block is appended. Order matters: XGBoost validates feature names/order at predict.
 FEATURE_COLS: list[str] = [
     "rmin", "vs", "pr", "vpd", "fm100", "bi", "aet", "water_deficit",
     "lightning_count", "lat_center", "lon_center", "tmmx_c",
     "erc_7d", "erc_14d", "vpd_7d", "vpd_14d", "bi_7d", "bi_14d",
     "tmmx_7d", "rmin_7d", "dry_streak", "pr_7d", "pr_14d",
     "fm100_change_3d", "vpd_change_3d", "month", "month_sin", "doy_cos",
+    *STATIC_FEATURES,
 ]
+
+
+def merge_static_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Left-join the static per-cell features onto a frame keyed by grid_id."""
+    static = pd.read_json(REFERENCE_DIR / "static_features.json")
+    keep = ["grid_id", *[c for c in STATIC_FEATURES if c in static.columns]]
+    return df.merge(static[keep], on="grid_id", how="left")
 
 
 def select_features(df: pd.DataFrame, *, strict: bool = True) -> pd.DataFrame:
