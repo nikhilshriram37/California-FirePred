@@ -12,7 +12,7 @@ import logging
 
 import pandas as pd
 
-from src.models.features import merge_static_features
+from src.models.features import FEATURE_COLS, merge_static_features
 from src.preprocessing.build_dataset import engineer_features
 from src.pipeline.geo import filter_to_california
 
@@ -60,6 +60,19 @@ def build_live_features(
 
     before = len(day)
     day = filter_to_california(day)
+
+    # Drop cells that can't be fully scored — any NaN in the model's feature
+    # vector. In practice these are remote offshore islands (San Clemente, San
+    # Nicolas) whose center is inside the CA polygon but whose nearest gridMET
+    # pixel is ocean, leaving weather (and its rolling derivatives) undefined.
+    # Training likewise dropped weatherless ocean cells; scoring them would
+    # fabricate a tier from XGBoost's missing-value default paths.
+    incomplete = day[FEATURE_COLS].isna().any(axis=1)
+    if incomplete.any():
+        logger.info("dropping %s cell(s) with incomplete features: %s",
+                    int(incomplete.sum()), day.loc[incomplete, "grid_id"].tolist())
+        day = day[~incomplete].copy()
+
     logger.info("live features: %s cells for %s (CA-clipped from %s)",
                 len(day), target.date(), before)
     return day, target
