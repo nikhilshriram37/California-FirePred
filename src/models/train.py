@@ -55,8 +55,10 @@ TUNED_PARAMS: dict = dict(
 
 TRAIN_YEARS = [2018, 2019]
 TEST_YEAR = 2020
-RED_RECALL = 0.45     # red = tight, high-lift "send resources here" tier (~11x base rate)
-YELLOW_RECALL = 0.80  # red+yellow still catches ~80%+ of fires, ~22% of state flagged
+RED_RECALL = 0.55     # red = tight "send resources here" tier: catches ~59% of fires,
+                      # flags ~3.5% of the state, ~17x base rate (sweet spot — above 0.60
+                      # recall plateaus and lift falls off, diluting actionability).
+YELLOW_RECALL = 0.80  # red+yellow catches ~81% of fires, ~10% of state flagged
 
 
 def _threshold_for_recall(y: np.ndarray, p: np.ndarray, target: float) -> float:
