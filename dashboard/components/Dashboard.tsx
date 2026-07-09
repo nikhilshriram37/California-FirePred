@@ -37,8 +37,10 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<CellProperties | null>(null);
   const [visible, setVisible] = useState<Set<Tier>>(new Set(ALL_TIERS));
 
-  // horizon -1 = active fires; 0 = today; 1..5 = forecast days ahead.
+  // horizon 0 = today; 1..5 = forecast days ahead. Active fires is an independent
+  // overlay (showFires), so you can see fires and risk on the same map.
   const [horizon, setHorizon] = useState(0);
+  const [showFires, setShowFires] = useState(false);
   const [layers, setLayers] = useState<Record<number, FeatureCollection>>({});
 
   useEffect(() => {
@@ -79,10 +81,11 @@ export default function Dashboard() {
     setSelected(null);
   }, []);
 
+  const toggleFires = useCallback(() => setShowFires((v) => !v), []);
+
   const today = pacificToday();
-  const firesMode = horizon === -1;
-  const risk = firesMode ? null : (layers[horizon] ?? null);
-  const displayedFires = firesMode ? fires : null;
+  const risk = layers[horizon] ?? null;
+  const displayedFires = showFires ? fires : null;
   const counts = useMemo(() => tierCounts(risk), [risk]);
   const fireCount = fires?.features.length ?? 0;
   const visibleTiers = useMemo(() => Array.from(visible), [visible]);
@@ -101,21 +104,14 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="status">
-          {firesMode ? (
-            <>
-              <span className="badge fires">🔥 ACTIVE FIRES</span>
-              <span><b>{fireCount.toLocaleString()}</b> detections · last 48h</span>
-              <span>NASA FIRMS satellite</span>
-            </>
-          ) : (
-            <>
-              <span className="badge forecast">FORECAST</span>
-              <span>
-                {activeDate ? relLabel(dayDiff(activeDate, today)) : `Day +${horizon}`}
-                {" · "}<b>{formatMD(activeDate)}</b>
-              </span>
-              <span>Updated {timeAgo(info?.generated_at)}</span>
-            </>
+          <span className="badge forecast">FORECAST</span>
+          <span>
+            {activeDate ? relLabel(dayDiff(activeDate, today)) : `Day +${horizon}`}
+            {" · "}<b>{formatMD(activeDate)}</b>
+          </span>
+          <span>Updated {timeAgo(info?.generated_at)}</span>
+          {showFires && (
+            <span className="badge fires">🔥 {fireCount.toLocaleString()} active · last 48h</span>
           )}
         </div>
       </header>
@@ -124,7 +120,7 @@ export default function Dashboard() {
         counts={counts}
         nCells={nCells}
         fireCount={fireCount}
-        firesMode={firesMode}
+        showFires={showFires}
         generatedAt={info?.generated_at ?? null}
         visible={visible}
         onToggleTier={toggleTier}
@@ -137,7 +133,15 @@ export default function Dashboard() {
           visibleTiers={visibleTiers}
           onSelectCell={setSelected}
         />
-        <DaySelector horizon={horizon} dates={dates} today={today} onSelect={selectHorizon} />
+        <DaySelector
+          horizon={horizon}
+          dates={dates}
+          today={today}
+          onSelect={selectHorizon}
+          showFires={showFires}
+          onToggleFires={toggleFires}
+          fireCount={fireCount}
+        />
         {selected && <CellDetail cell={selected} onClose={() => setSelected(null)} />}
       </div>
     </div>

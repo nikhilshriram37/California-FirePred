@@ -2,32 +2,24 @@
 
 import { formatMD } from "@/lib/dates";
 
-// -1 = active fires (observations only); 0 = today; 1..5 = forecast days ahead.
-const MODES = [-1, 0, 1, 2, 3, 4, 5];
+// 0 = today; 1..5 = forecast days ahead. Active fires is an independent overlay
+// toggle (see the 🔥 button), not a day.
+const DAYS = [0, 1, 2, 3, 4, 5];
 
 export default function DaySelector({
-  horizon, dates, today, onSelect,
+  horizon, dates, today, onSelect, showFires, onToggleFires, fireCount,
 }: {
   horizon: number;
   dates: Record<number, string>;
   today: string;
   onSelect: (h: number) => void;
+  showFires: boolean;
+  onToggleFires: () => void;
+  fireCount: number;
 }) {
   return (
     <div className="day-selector">
-      {MODES.map((h) => {
-        if (h === -1) {
-          return (
-            <button
-              key={h}
-              className={`day-btn fires ${h === horizon ? "active" : ""}`}
-              onClick={() => onSelect(h)}
-              title="Live satellite fire detections"
-            >
-              🔥 Fires
-            </button>
-          );
-        }
+      {DAYS.map((h) => {
         const date = dates[h];
         const isToday = date === today;
         return (
@@ -42,6 +34,15 @@ export default function DaySelector({
           </button>
         );
       })}
+      <span className="day-sep" aria-hidden />
+      <button
+        className={`day-btn fires ${showFires ? "active" : ""}`}
+        onClick={onToggleFires}
+        title="Overlay live satellite fire detections on top of the risk map"
+        aria-pressed={showFires}
+      >
+        🔥 Fires{fireCount ? ` · ${fireCount}` : ""}
+      </button>
     </div>
   );
 }

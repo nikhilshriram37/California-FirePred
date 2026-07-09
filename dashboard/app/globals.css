@@ -108,9 +108,10 @@ html, body {
 }
 .day-btn:hover { background: var(--panel-2); }
 .day-btn.active { background: #1f6feb33; border-color: #1f6feb88; color: #cfe6ff; }
-.day-btn.fires { color: #ffb088; margin-right: 2px; }
+.day-btn.fires { color: #ffb088; }
 .day-btn.fires.active { background: #ff5a1f33; border-color: #ff5a1f88; color: #ffd2bc; }
 .day-btn.today { box-shadow: inset 0 -2px 0 #7ee78788; }
+.day-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 3px; }
 .today-tag {
   display: block; font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.5px;
   color: #7ee787; line-height: 1; margin-top: 1px; font-weight: 700;
