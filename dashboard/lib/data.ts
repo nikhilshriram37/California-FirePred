@@ -30,10 +30,14 @@ async function readLocal<T>(file: string): Promise<T> {
 export async function getMeta(): Promise<RiskMeta> {
   const sb = getServerSupabase();
   if (sb) {
+    // gridMET lags ~2 days, so many runs share the same data_date and risk_meta
+    // is insert-only — tie-break on generated_at so we return the *newest* run's
+    // metadata (n_cells, model_version), not an arbitrary same-date row.
     const { data } = await sb
       .from("risk_meta")
       .select("*")
       .order("data_date", { ascending: false })
+      .order("generated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     if (data) return data as RiskMeta;
