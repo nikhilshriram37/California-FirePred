@@ -116,8 +116,11 @@ def persist_forecast(day: pd.DataFrame, meta: dict, client=None) -> bool:
         for i in range(0, len(rows), _CHUNK):
             client.table("forecast_scores").upsert(
                 rows[i:i + _CHUNK], on_conflict="run_date,grid_id,horizon").execute()
-    except Exception as e:  # table may not exist yet (migration 0003) — don't crash the run
-        logger.warning("forecast persist skipped (%s) — run migration 0003", str(e)[:80])
+    except Exception as e:  # don't crash the whole run on one horizon
+        msg = str(e)
+        hint = " — run migration 0003" if "does not exist" in msg else ""
+        logger.warning("forecast persist skipped for h+%s (%s cells): %s%s",
+                       meta.get("horizon"), len(rows), msg[:200], hint)
         return False
     logger.info("Persisted forecast h+%s (%s) -> %s cells", meta["horizon"], meta["data_date"], len(day))
     return True

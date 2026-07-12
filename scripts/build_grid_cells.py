@@ -31,11 +31,23 @@ from src.preprocessing.build_dataset import build_grid
 
 COLS = ["grid_id", "lat_center", "lon_center"]
 
+# Cells inside the CA polygon but with NO gridMET land pixel (remote offshore
+# islands: 479 = San Clemente, 784 = San Nicolas). They can't be scored from
+# gridMET, so we exclude them from the canonical grid entirely — otherwise the
+# same-day path drops them (all-NaN weather) while the forecast path keeps them
+# (Open-Meteo covers open ocean), and the two paths disagree on the cell set.
+NO_GRIDMET_CELLS = {479, 784}
+
 
 def build_california_land_grid(resolution_deg: float = 0.1) -> pd.DataFrame:
-    """Full CA-land grid at the given resolution, with stable row-major grid_ids."""
+    """Full CA-land grid at the given resolution, with stable row-major grid_ids.
+
+    Excludes offshore-island cells with no gridMET coverage so the canonical grid
+    equals the set of cells the model can actually score.
+    """
     full = build_grid(REGIONS["california"], resolution_deg)
     land = filter_to_california(full).reset_index(drop=True)
+    land = land[~land["grid_id"].isin(NO_GRIDMET_CELLS)].reset_index(drop=True)
     return land[COLS].astype({"grid_id": int}).round({"lat_center": 4, "lon_center": 4})
 
 
