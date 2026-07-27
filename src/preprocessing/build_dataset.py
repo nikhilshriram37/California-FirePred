@@ -224,6 +224,7 @@ def fetch_gridmet_for_grid(
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     result_df = None
+    var_max_dates: dict[str, pd.Timestamp] = {}
 
     for var in variables:
         local_path = cache_dir / f"{var}_{year}.nc"
@@ -272,10 +273,15 @@ def fetch_gridmet_for_grid(
                 "grid_id": np.tile(grid["grid_id"].values, n_days),
                 var: values.ravel(),
             })
+            var_max_dates[var] = days.max()
 
             if result_df is None:
                 result_df = var_df
             else:
+                # NOTE: assumes every variable's file is a contiguous daily series
+                # starting from the same day (true for gridMET's annual files), so
+                # aligning by row position is equivalent to aligning by date here —
+                # but only up to the shortest variable (see truncation below).
                 result_df[var] = var_df[var]
 
             ds.close()
@@ -287,6 +293,24 @@ def fetch_gridmet_for_grid(
 
     if result_df is None:
         return pd.DataFrame()
+
+    # gridMET's variables are not always published on the same schedule — e.g. tmmx
+    # and pr can be a day or two ahead of erc/bi/fm100/rmin/vpd/vs. result_df's date
+    # range follows whichever variable was processed FIRST, so if a later variable
+    # lags, its newest rows are silently NaN rather than absent. Truncate to the
+    # latest date where EVERY requested variable actually has data, so callers never
+    # pick a "latest available day" that's really only latest for a subset of
+    # variables (which previously left every cell missing several features and
+    # made the whole day unscoreable).
+    if var_max_dates:
+        common_max = min(var_max_dates.values())
+        if result_df["date"].max() > common_max:
+            lagging = {v: str(d.date()) for v, d in var_max_dates.items() if d > common_max}
+            logger.warning(
+                "gridMET variables out of sync for %s — truncating to %s (lagging: %s)",
+                year, common_max.date(), lagging,
+            )
+            result_df = result_df[result_df["date"] <= common_max].copy()
 
     logger.info(f"Weather data for {year}: {len(result_df):,} rows, {len(variables)} variables")
     return result_df
