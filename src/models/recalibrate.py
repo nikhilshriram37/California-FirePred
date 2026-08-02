@@ -231,8 +231,9 @@ def evaluate(models_dir: Path = MODELS_DIR, holdout_fraction: float = HOLDOUT_FR
     ship_y = df["y"].to_numpy()
     ship_thr = tier_thresholds(ship_p, ship_y)
     ship_out = _tier_outcome(ship_p, ship_y, ship_thr)
-    per_day = df.assign(_p=ship_p).groupby("date").apply(
-        lambda g: float((g["_p"] >= ship_thr["red"]).mean()), include_groups=False)
+    # Plain groupby-mean rather than .apply(include_groups=...): that keyword's
+    # behaviour differs across pandas 2.0/2.2/3.0, and CI installs pandas unpinned.
+    per_day = df.assign(_red=ship_p >= ship_thr["red"]).groupby("date")["_red"].mean()
 
     ece_gain = (inc_cal["ece"] - cand_cal["ece"]) / inc_cal["ece"] if inc_cal["ece"] else 0.0
     brier_gain = (inc_cal["brier"] - cand_cal["brier"]) / inc_cal["brier"] if inc_cal["brier"] else 0.0
