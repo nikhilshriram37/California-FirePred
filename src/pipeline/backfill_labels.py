@@ -62,6 +62,7 @@ HALF = CELL_DEG / 2
 # legitimately be empty, so a count below these floors is an outage, not a quiet day.
 MIN_IRWIN_YTD = 1
 MIN_CALFIRE_YTD = 1
+FIRMS_TIMEOUT = 30             # per request; the retry budget multiplies this
 USER_AGENT = ("FireProject/1.0 (wildfire risk research; "
               "+https://california-firepred.vercel.app)")
 
@@ -75,16 +76,34 @@ class SourceUnavailable(RuntimeError):
     """
 
 
+def _force_ipv4() -> None:
+    """Make outbound HTTPS resolve A records only.
+
+    GitHub Actions runners advertise IPv6 but frequently have no working IPv6 egress,
+    which surfaces as ``[Errno 101] Network is unreachable`` the moment a host publishes
+    an AAAA record — exactly what FIRMS does. Locally, where IPv6 works or is absent,
+    this is a no-op.
+    """
+    import socket
+    import urllib3.util.connection as u3
+    u3.allowed_gai_family = lambda: socket.AF_INET
+
+
 @lru_cache(maxsize=1)
 def _session() -> requests.Session:
-    """Shared session with retries and a real User-Agent.
+    """Shared session with a bounded retry budget and a real User-Agent.
 
-    The default urllib3 UA is a common trigger for datacenter-IP blocking, which is
-    the leading suspect for these feeds failing from CI but not from a laptop.
+    The retry budget is deliberately small. An earlier version used 4 retries with a
+    1.5s backoff factor and a 120s timeout, which turned an unreachable host into ~8
+    minutes per satellite per date and blew through the workflow's 20-minute cap after
+    two days' work. Connection failures in particular get a single retry: a network
+    that is unreachable now will still be unreachable three seconds from now.
     """
+    _force_ipv4()
     s = requests.Session()
     s.headers.update({"User-Agent": USER_AGENT})
-    retry = Retry(total=4, backoff_factor=1.5, status_forcelist=(408, 429, 500, 502, 503, 504),
+    retry = Retry(total=2, connect=1, backoff_factor=1.0,
+                  status_forcelist=(408, 429, 500, 502, 503, 504),
                   allowed_methods=frozenset(["GET"]), raise_on_status=False)
     s.mount("https://", HTTPAdapter(max_retries=retry))
     return s
@@ -132,7 +151,7 @@ def fetch_firms_for_date(date: dt.date, map_key: str | None = None) -> pd.DataFr
     frames = []
     for src in FIRMS_SOURCES:
         try:
-            r = _session().get(f"{FIRMS_BASE}/{map_key}/{src}/{bbox}/1/{ds}", timeout=120)
+            r = _session().get(f"{FIRMS_BASE}/{map_key}/{src}/{bbox}/1/{ds}", timeout=FIRMS_TIMEOUT)
             r.raise_for_status()
         except SourceUnavailable:
             raise
@@ -338,8 +357,21 @@ def backfill_range(days: int = 7, end: dt.date | None = None) -> list[dict]:
     irwin, calfire = fetch_irwin_ca(), fetch_calfire_ca()
     ws = _has_label_source(client)
     end = end or dt.date.today()
-    return [backfill_date(client, grid, end - dt.timedelta(days=d), irwin, calfire, ws)
-            for d in range(1, days + 1)]
+
+    # Stop at the first FIRMS outage instead of retrying it once per date. An
+    # unreachable host is unreachable for the whole window, and grinding through every
+    # date against it is what previously consumed the workflow's entire time budget.
+    results = []
+    for d in range(1, days + 1):
+        r = backfill_date(client, grid, end - dt.timedelta(days=d), irwin, calfire, ws)
+        results.append(r)
+        if not r.get("healthy"):
+            remaining = days - d
+            if remaining:
+                logger.error("FIRMS unreachable — abandoning the remaining %d date(s) rather "
+                             "than retrying a dead host; labels are left intact", remaining)
+            break
+    return results
 
 
 def main() -> None:
