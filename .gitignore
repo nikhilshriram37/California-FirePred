@@ -47,3 +47,8 @@ node_modules/
 # Local backups + local Claude settings
 .backups/
 .claude/settings.local.json
+
+# Candidate model artifacts — derived output from retrain/recalibration experiments.
+# Only the promoted model in models/ is tracked; promotion copies a candidate into
+# place and archives it under models/archive/<version>/.
+models/candidate/
