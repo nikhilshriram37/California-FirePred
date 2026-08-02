@@ -29,10 +29,20 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install deps
-        run: pip install pandas numpy requests supabase python-dotenv
+        run: pip install pandas numpy scikit-learn requests supabase python-dotenv
       - name: Backfill labels from FIRMS
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           NASA_FIRMS_MAP_KEY: ${{ secrets.NASA_FIRMS_MAP_KEY }}
         run: python -m src.pipeline.backfill_labels --days ${{ github.event.inputs.days || '7' }}
+
+      # Same window as the labelling step, and deliberately after it: a scorecard is
+      # only meaningful once that day's outcomes are known. Upserting the whole window
+      # each run lets late-arriving detections correct earlier scorecards. Skipped
+      # entirely if labelling failed, so metrics are never computed on bad labels.
+      - name: Score model performance into model_metrics
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python -m src.pipeline.metrics --days ${{ github.event.inputs.days || '7' }}
