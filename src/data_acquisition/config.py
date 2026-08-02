@@ -21,12 +21,25 @@ for d in [RAW_DIR, PROCESSED_DIR, EXTERNAL_DIR, REFERENCE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # --- API Keys (loaded from .env) ---
-NOAA_API_KEY = os.getenv("NOAA_API_KEY", "")
-NASA_EARTHDATA_TOKEN = os.getenv("NASA_EARTHDATA_TOKEN", "")
-NASA_FIRMS_MAP_KEY = os.getenv("NASA_FIRMS_MAP_KEY", "")
-EPA_AQS_EMAIL = os.getenv("EPA_AQS_EMAIL", "")
-EPA_AQS_KEY = os.getenv("EPA_AQS_KEY", "")
-OPENAQ_API_KEY = os.getenv("OPENAQ_API_KEY", "")
+def _key(name: str) -> str:
+    """Read a credential, stripping surrounding whitespace.
+
+    Not defensive padding: a leading space in the GitHub Actions copy of
+    NASA_FIRMS_MAP_KEY sent every CI FIRMS request to a URL containing '%20' and got
+    400 Bad Request back for four weeks. Because the old fetcher treated a failed
+    response as "no detections", that silently erased ~85% of July's fire labels.
+    Keys pasted into dashboards pick up stray whitespace easily and nothing upstream
+    trims it for you.
+    """
+    return os.getenv(name, "").strip()
+
+
+NOAA_API_KEY = _key("NOAA_API_KEY")
+NASA_EARTHDATA_TOKEN = _key("NASA_EARTHDATA_TOKEN")
+NASA_FIRMS_MAP_KEY = _key("NASA_FIRMS_MAP_KEY")
+EPA_AQS_EMAIL = _key("EPA_AQS_EMAIL")
+EPA_AQS_KEY = _key("EPA_AQS_KEY")
+OPENAQ_API_KEY = _key("OPENAQ_API_KEY")
 
 # --- Default Geographic Bounds (Contiguous US) ---
 CONUS_BBOX = {
