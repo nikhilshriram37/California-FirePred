@@ -32,5 +32,8 @@
   "slope_deg",
   "northness",
   "eastness",
-  "log_pop"
+  "log_pop",
+  "fire_recency_cell",
+  "fire_recency_nbr",
+  "days_since_fire_cell"
 ]

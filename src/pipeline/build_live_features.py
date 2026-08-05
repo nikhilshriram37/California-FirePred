@@ -13,6 +13,7 @@ import logging
 import pandas as pd
 
 from src.models.features import FEATURE_COLS, merge_static_features
+from src.models.recency import merge_recency
 from src.preprocessing.build_dataset import engineer_features
 from src.pipeline.geo import filter_to_california
 
@@ -25,6 +26,7 @@ def build_live_features(
     dryness: pd.DataFrame,
     lightning: pd.DataFrame,
     target_date: pd.Timestamp | None = None,
+    fire_history: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.Timestamp]:
     """Return (features_for_target_day, target_date).
 
@@ -34,6 +36,11 @@ def build_live_features(
         dryness: per-cell aet, water_deficit (seasonal normal for the month).
         lightning: per-cell lightning_count for the target day (GOES-GLM).
         target_date: day to score; defaults to the latest gridMET date.
+        fire_history: confirmed ignitions as (grid_id, date), for the fire-recency
+            prior. Fetch it with :func:`src.pipeline.fire_history.fetch_recent_fires`.
+            ``None`` means "nothing burned recently" — correct for a genuinely quiet
+            period, but wrong and silently pessimistic if the label job is down, so
+            callers should pass a real history and check its freshness.
     """
     df = gridmet_recent.merge(grid[["grid_id", "lat_center", "lon_center"]], on="grid_id", how="left")
     df = df.merge(dryness, on="grid_id", how="left")
@@ -57,6 +64,13 @@ def build_live_features(
     day["lightning_count"] = day["lightning_count"].fillna(0).astype(int)
 
     day = merge_static_features(day)  # topography + human-exposure (per-cell, static)
+
+    # Fire-recency prior. Built here rather than in engineer_features because it needs
+    # the label history, not the weather feed. For a forecast horizon the target date
+    # sits beyond the last observed fire and the prior simply decays forward, which is
+    # the correct belief about a future we cannot yet have labels for.
+    fires = fire_history if fire_history is not None else pd.DataFrame(columns=["grid_id", "date"])
+    day = merge_recency(day, fires)
 
     before = len(day)
     day = filter_to_california(day)

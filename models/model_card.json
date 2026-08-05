@@ -1,13 +1,13 @@
 {
   "model": "xgboost-isotonic",
-  "version": "20260709",
-  "trained_at": "2026-07-09T19:11:24.592422+00:00",
+  "version": "20260805",
+  "trained_at": "2026-08-05T14:53:37.739214+00:00",
   "train_years": [
     2018,
     2019
   ],
   "test_year": 2020,
-  "n_features": 34,
+  "n_features": 37,
   "params": {
     "learning_rate": 0.03329,
     "max_depth": 8,
@@ -22,11 +22,15 @@
     "n_estimators": 296
   },
   "metrics": {
-    "pr_auc": 0.09082078862033949,
-    "roc_auc": 0.9385759959345651
+    "pr_auc": 0.10962939318560867,
+    "roc_auc": 0.9494695410866765
   },
   "tiers": {
-    "red": 0.026430347934365273,
-    "yellow": 0.005022112280130386
+    "red": 0.03357314318418503,
+    "yellow": 0.008531540632247925
+  },
+  "recency": {
+    "tau_days": 30.0,
+    "lag_days": 2
   }
 }

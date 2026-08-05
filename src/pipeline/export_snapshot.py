@@ -18,7 +18,9 @@ from pathlib import Path
 import pandas as pd
 
 from src.data_acquisition.config import PROCESSED_DIR
+from src.models.features import TARGET_COL, merge_static_features
 from src.models.predict import load_model
+from src.models.recency import merge_recency
 from src.pipeline.geo import filter_to_california
 from src.pipeline.snapshot import SNAPSHOT_DIR, build_meta, day_to_feature_collection, write_snapshot
 
@@ -42,6 +44,14 @@ def build_snapshot(date: str | None = None, latest: bool = False,
     day = df[df["date"] == target].copy()
     if day.empty:
         raise ValueError(f"no rows for {target.date()} in {dataset_path}")
+
+    # The model's contract is not just the parquet's columns: the static block is
+    # joined by grid_id and the recency block is derived from label history. Without
+    # them predict() still runs — select_features is deliberately lenient for a live
+    # feed that drops a variable — but silently routes every missing feature down
+    # XGBoost's default path, which quietly wrecks the scores.
+    day = merge_static_features(day)
+    day = merge_recency(day, df.loc[df[TARGET_COL] == 1, ["grid_id", "date"]])
 
     # Clip to the real state border — the grid is a bbox, so ~37% of cells are
     # actually in Nevada/Arizona/offshore and shouldn't be drawn.

@@ -31,6 +31,7 @@ from xgboost import XGBClassifier
 
 from src.data_acquisition.config import PROCESSED_DIR, PROJECT_ROOT
 from src.models.features import FEATURE_COLS, TARGET_COL, merge_static_features, select_features
+from src.models.recency import TAU_DAYS, DEFAULT_LAG_DAYS, merge_recency
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,11 @@ def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> di
     df = pd.read_parquet(dataset_path)
     df["date"] = pd.to_datetime(df["date"])
     df = merge_static_features(df)  # topography + human-exposure (per-cell, static)
+
+    # Fire-recency prior, built from this dataset's own labels. Causal by construction
+    # and lagged exactly as serving is (labels trail scoring in production), so the
+    # model never trains on a fresher signal than it will be given.
+    df = merge_recency(df, df.loc[df[TARGET_COL] == 1, ["grid_id", "date"]])
 
     train_df = df[df["date"].dt.year.isin(TRAIN_YEARS)]
     test_df = df[df["date"].dt.year == TEST_YEAR]
@@ -128,6 +134,10 @@ def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> di
         "params": TUNED_PARAMS,
         "metrics": {"pr_auc": pr_auc, "roc_auc": roc_auc},
         "tiers": {"red": red_t, "yellow": yellow_t},
+        # Recorded so serving can be checked against the settings the model was
+        # actually fitted under — a silent tau/lag change is invisible in the output
+        # but retrains the meaning of three of its features.
+        "recency": {"tau_days": TAU_DAYS, "lag_days": DEFAULT_LAG_DAYS},
     }
     (models_dir / "model_card.json").write_text(json.dumps(model_card, indent=2))
     logger.info("wrote artifacts to %s", models_dir)

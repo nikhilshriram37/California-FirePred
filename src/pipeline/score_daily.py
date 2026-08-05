@@ -30,7 +30,9 @@ from src.data_acquisition.config import PROCESSED_DIR, REFERENCE_DIR
 from src.data_acquisition.fetch_glm import fetch_glm_lightning
 from src.data_acquisition.fetch_live import dryness_for_month, fetch_gridmet_recent
 from src.models.predict import load_model
+from src.models.recency import DEFAULT_LAG_DAYS
 from src.pipeline.build_live_features import build_live_features
+from src.pipeline.fire_history import check_freshness, fetch_recent_fires
 from src.pipeline.snapshot import build_meta, day_to_feature_collection, write_snapshot
 from src.pipeline.supabase_io import get_client, persist_daily
 
@@ -58,7 +60,8 @@ def canonical_grid() -> pd.DataFrame:
 
 
 def _score_target(grid: pd.DataFrame, gridmet: pd.DataFrame, target: pd.Timestamp,
-                  glm_sample: int, *, mode: str, write: bool, persist: bool) -> dict:
+                  glm_sample: int, *, mode: str, write: bool, persist: bool,
+                  fires: pd.DataFrame | None = None) -> dict:
     """Score one gridMET day: features -> prediction -> snapshot / Supabase rows."""
     # Seasonal dryness (TerraClimate has no live feed) + lightning for that day.
     # GLM is asked for an explicit end-instant rather than "the last 24 hours", so a
@@ -67,7 +70,7 @@ def _score_target(grid: pd.DataFrame, gridmet: pd.DataFrame, target: pd.Timestam
     lightning = fetch_glm_lightning(grid, hours=24, end=end_utc, sample_every=glm_sample)
 
     day, target = build_live_features(grid, gridmet, dryness_for_month(int(target.month)),
-                                      lightning, target_date=target)
+                                      lightning, target_date=target, fire_history=fires)
     day = day.join(load_model().predict(day))
 
     meta = build_meta(day, target.strftime("%Y-%m-%d"), mode=mode,
@@ -117,12 +120,18 @@ def score_daily(glm_sample: int = 1, write: bool = True, persist: bool = True,
     dates = sorted(gridmet["date"].unique())
     target = dates[-1]
 
+    # Confirmed ignitions behind the fire-recency prior. Fetched once for the newest
+    # target; recovered days re-use it, and the feature ignores anything at or after
+    # the day being scored, so an older target simply sees less of it.
+    fires = fetch_recent_fires(get_client(), pd.Timestamp(target).date())
+    check_freshness(fires, target, DEFAULT_LAG_DAYS)
+
     # Recover missed days first so the last write is the live day — the dashboard
     # takes the newest data_date, and the local snapshot is a single file.
     for missed in unscored_recent(dates, target, catchup_days):
         try:
             m = _score_target(grid, gridmet, missed, glm_sample,
-                              mode="catchup", write=False, persist=persist)
+                              mode="catchup", write=False, persist=persist, fires=fires)
             logger.info("recovered unscored day %s -> %s cells %s",
                         m["data_date"], m["n_cells"], m["tier_counts"])
         except Exception as e:
@@ -131,7 +140,7 @@ def score_daily(glm_sample: int = 1, write: bool = True, persist: bool = True,
                            pd.Timestamp(missed).date(), e)
 
     return _score_target(grid, gridmet, target, glm_sample,
-                         mode="live", write=write, persist=persist)
+                         mode="live", write=write, persist=persist, fires=fires)
 
 
 def main() -> None:

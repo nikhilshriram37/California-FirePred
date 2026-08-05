@@ -30,6 +30,7 @@ from src.preprocessing.build_dataset import fetch_gridmet_for_grid
 from src.pipeline.backfill_labels import (_grid, _has_label_source, backfill_date,
                                           fetch_calfire_ca, fetch_irwin_ca)
 from src.pipeline.build_live_features import build_live_features
+from src.pipeline.fire_history import fetch_recent_fires
 from src.pipeline.score_daily import canonical_grid
 from src.pipeline.snapshot import build_meta
 from src.pipeline.supabase_io import get_client, persist_daily
@@ -59,11 +60,11 @@ def _already_scored(client, ds: str) -> bool:
     return bool(client.table("risk_scores").select("grid_id").eq("date", ds).limit(1).execute().data)
 
 
-def score_day(grid, gridmet, D: dt.date, glm_sample: int) -> dict:
+def score_day(grid, gridmet, D: dt.date, glm_sample: int, fires=None) -> dict:
     end_utc = dt.datetime(D.year, D.month, D.day, 23, 59, 59, tzinfo=dt.UTC)
     lightning = fetch_glm_lightning(grid, hours=24, end=end_utc, sample_every=glm_sample)
     day, _ = build_live_features(grid, gridmet, dryness_for_month(D.month), lightning,
-                                 target_date=pd.Timestamp(D))
+                                 target_date=pd.Timestamp(D), fire_history=fires)
     day = day.join(load_model().predict(day))
     meta = build_meta(day, D.strftime("%Y-%m-%d"), mode="backfill",
                       source="backfill: gridMET + GOES-GLM (archive)",
@@ -96,7 +97,10 @@ def main() -> None:
         if _already_scored(client, ds):
             logger.info("%s already scored — skipping (additive)", ds)
             continue
-        meta = score_day(grid, gridmet, D, args.glm_sample)
+        # Fire-recency prior as it stood for that day. Re-fetched per day so a replay
+        # sees only what was knowable then, matching how the live path scored it.
+        fires = fetch_recent_fires(client, D)
+        meta = score_day(grid, gridmet, D, args.glm_sample, fires=fires)
         logger.info("scored %s -> %s cells %s", ds, meta["n_cells"], meta["tier_counts"])
         scored.append(D)
 

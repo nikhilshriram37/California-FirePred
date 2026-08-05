@@ -95,10 +95,21 @@ def run_forecast(horizons: int = 5, persist: bool = True, write: bool = True) ->
     dryness = dryness_for_month(int(target_dates[0].month))
     lightning_zero = pd.DataFrame({"grid_id": grid["grid_id"], "lightning_count": 0})
 
+    # Fire-recency prior, fetched once. Labels can only ever reach up to today, so at
+    # horizon h the prior is the same evidence decayed h days further — which is the
+    # honest forecast of a quantity whose future inputs do not exist yet.
+    from src.pipeline.fire_history import check_freshness, fetch_recent_fires
+    from src.pipeline.supabase_io import get_client
+    from src.models.recency import DEFAULT_LAG_DAYS
+
+    fires = fetch_recent_fires(get_client(), pac_today)
+    check_freshness(fires, target_dates[0], DEFAULT_LAG_DAYS)
+
     model = load_model()
     results = []
     for h, td in enumerate(target_dates):  # h = 0..horizons
-        day, _ = build_live_features(grid, panel, dryness, lightning_zero, target_date=td)
+        day, _ = build_live_features(grid, panel, dryness, lightning_zero,
+                                     target_date=td, fire_history=fires)
         day = day.join(model.predict(day))
         geojson = day_to_feature_collection(day)
         meta = build_meta(day, td.strftime("%Y-%m-%d"), mode="forecast",

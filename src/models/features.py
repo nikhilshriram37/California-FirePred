@@ -11,6 +11,7 @@ order, are handed to the model.
 import pandas as pd
 
 from src.data_acquisition.config import REFERENCE_DIR
+from src.models.recency import RECENCY_FEATURES
 
 # Identifiers + fire outcomes that must never be fed to the model.
 ID_COLS: list[str] = ["grid_id", "date"]
@@ -27,7 +28,14 @@ STATIC_FEATURES: list[str] = [
 
 # The full model feature set, in a fixed, serialization-stable order. The first 28
 # are the weather/fuel/temporal features engineered by engineer_features; the static
-# block is appended. Order matters: XGBoost validates feature names/order at predict.
+# block is appended, then the recency block. Order matters: XGBoost validates feature
+# names/order at predict.
+#
+# The recency block carries a *current* spatial prior — see src/models/recency.py.
+# Without it the model's only sense of "where fires happen" was whatever 2018-2020
+# looked like, frozen into lat/lon; measured live, that stale prior cost ~4x PR-AUC.
+# It is produced by merge_recency() in both training and serving, never by
+# engineer_features, because it needs the label history rather than the weather feed.
 FEATURE_COLS: list[str] = [
     "rmin", "vs", "pr", "vpd", "fm100", "bi", "aet", "water_deficit",
     "lightning_count", "lat_center", "lon_center", "tmmx_c",
@@ -35,6 +43,7 @@ FEATURE_COLS: list[str] = [
     "tmmx_7d", "rmin_7d", "dry_streak", "pr_7d", "pr_14d",
     "fm100_change_3d", "vpd_change_3d", "month", "month_sin", "doy_cos",
     *STATIC_FEATURES,
+    *RECENCY_FEATURES,
 ]
 
 

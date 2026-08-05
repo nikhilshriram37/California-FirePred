@@ -3,7 +3,12 @@
 import { TIER_COLORS, type CellProperties, type Tier } from "@/lib/types";
 
 // Human-friendly labels + units for the model drivers surfaced per cell.
+// Fire recency leads because it leads the model: since the recency features were
+// added it accounts for ~41% of total gain, more than every weather feature combined.
+// Showing only weather here would misrepresent why a cell is red.
 const FEATURE_LABELS: Record<string, string> = {
+  days_since_fire_cell: "Days since last fire here",
+  fire_recency_nbr: "Recent fire activity nearby",
   vpd: "Vapor pressure deficit",
   fm100: "100-hr fuel moisture (%)",
   dry_streak: "Consecutive dry days",
@@ -14,6 +19,18 @@ const FEATURE_LABELS: Record<string, string> = {
   pr_14d: "Precip, 14-day (mm)",
   lightning_count: "Lightning strikes",
 };
+
+// days_since_fire_cell saturates rather than growing without bound, so the cap is a
+// floor on "a long time ago", not a measurement.
+const DAYS_SINCE_CAP = 365;
+
+function formatDriver(key: string, value: number): string {
+  if (key === "days_since_fire_cell") {
+    return value >= DAYS_SINCE_CAP ? `${DAYS_SINCE_CAP}+` : Math.round(value).toLocaleString();
+  }
+  if (key === "fire_recency_nbr") return value.toFixed(2);
+  return value.toLocaleString();
+}
 
 interface Props {
   cell: CellProperties;
@@ -56,7 +73,7 @@ export default function CellDetail({ cell, onClose }: Props) {
           {drivers.map((k) => (
             <tr key={k}>
               <td style={{ color: "var(--muted)" }}>{FEATURE_LABELS[k]}</td>
-              <td>{Number(cell[k]).toLocaleString()}</td>
+              <td>{formatDriver(k, Number(cell[k]))}</td>
             </tr>
           ))}
         </tbody>
