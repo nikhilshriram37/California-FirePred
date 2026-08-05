@@ -48,7 +48,14 @@ node_modules/
 .backups/
 .claude/settings.local.json
 
-# Candidate model artifacts — derived output from retrain/recalibration experiments.
-# Only the promoted model in models/ is tracked; promotion copies a candidate into
-# place and archives it under models/archive/<version>/.
+# Candidate model artifacts written by the offline feature experiments in scripts/.
+# Only the deployed model in models/ is tracked.
 models/candidate/
+
+# Evaluation datasets rebuilt from Supabase / the gridMET archive / the WFIGS archive.
+# Derived, large, and reproducible — but slow enough to rebuild (paged DB exports and
+# rate-limited API paging) that they are kept on disk between sessions. See
+# data/eval/README.md for what each one is and how to regenerate it (that README is
+# tracked; everything beside it is not).
+data/eval/*
+!data/eval/README.md
