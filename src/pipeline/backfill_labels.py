@@ -22,8 +22,17 @@ window means a silently-empty source overwrites *known-good* labels with zeros, 
 it did: IRWIN and FIRMS both failed from CI from 2026-07-04, erasing ~85% of that
 month's positives while every run reported success.
 
-Run:  python -m src.pipeline.backfill_labels                 # last 7 days
-      python -m src.pipeline.backfill_labels --days 10
+Reporting contract: the run's exit status tracks *data loss*, not this run's luck.
+FIRMS times out intermittently from GitHub Actions, so a failed date is normal and
+the trailing window heals it on a later run — failing loudly every time trains the
+alarm to be ignored, which is exactly how the corruption above went unnoticed for a
+month. The run therefore stays green while affected dates are still inside the
+window, and fails only when a date is about to leave it unlabelled, which no later
+run can undo. A date that has not been scored yet is reported as unlabelled rather
+than as a success; it previously recorded healthy=true after updating zero rows.
+
+Run:  python -m src.pipeline.backfill_labels                 # last 10 days
+      python -m src.pipeline.backfill_labels --days 14
       python -m src.pipeline.backfill_labels --date 2026-06-18
       python -m src.pipeline.backfill_labels --days 30 --end 2026-08-01
 """
@@ -65,6 +74,32 @@ MIN_CALFIRE_YTD = 1
 FIRMS_TIMEOUT = 30             # per request; the retry budget multiplies this
 USER_AGENT = ("FireProject/1.0 (wildfire risk research; "
               "+https://california-firepred.vercel.app)")
+
+# A date can only be labelled once scoring has written its feature_history rows.
+# Scoring and labelling are independent crons, and gridMET's ~1-day lag means the
+# day the labeller wants is often not scored until hours later — on 2026-08-04 the
+# labeller "labelled" 2026-08-03 six hours before it was scored, updating zero rows
+# and recording healthy=true. Routine, but it must never read as success. The
+# fraction (rather than >0) also rejects a partially-written day if scoring is
+# still in flight.
+MIN_SCORED_FRACTION = 0.9
+
+# A date drops out of the trailing re-label window after this many days; once it
+# does, an unlabelled day is unlabellable forever. The margin escalates one run
+# early, so the alarm fires while there is still a run left to fix it.
+AGE_OUT_MARGIN = 1
+
+# Wider than the 7 days this used to re-label, and deliberately wider than
+# score_daily's catch-up window: a day the scorer recovers late must still be inside
+# the label window when it lands, or it arrives scored and permanently unlabellable.
+LABEL_WINDOW_DAYS = 10
+
+# Labelling normally trails scoring by about a day (gridMET's lag means the newest
+# scored day is often scored after the labeller last ran). A gap wider than this is
+# not the usual offset — it means labelling has stopped keeping up, and waiting for
+# the age-out alarm would sit silent for over a week while a permanent breakage (a
+# revoked key, a moved endpoint) looks exactly like a run of bad luck.
+MAX_LABEL_LAG_DAYS = 3
 
 
 class SourceUnavailable(RuntimeError):
@@ -289,6 +324,19 @@ def _record_health(client, result: dict) -> dict:
     return result
 
 
+def _row_counts(client, ds: str) -> tuple[int, int]:
+    """(rows scored, rows carrying a label) in feature_history for one date.
+
+    Server-side exact counts, not client-side pagination: PostgREST ``.range()``
+    without an explicit order returns inconsistent pages over a table this size.
+    """
+    q = client.table("feature_history").select("grid_id", count="exact").eq("date", ds)
+    scored = q.limit(1).execute().count or 0
+    labelled = (client.table("feature_history").select("grid_id", count="exact")
+                .eq("date", ds).not_.is_("has_fire", "null").limit(1).execute().count or 0)
+    return scored, labelled
+
+
 def _has_label_source(client) -> bool:
     try:
         client.table("feature_history").select("label_source").limit(1).execute()
@@ -305,14 +353,32 @@ def backfill_date(client, grid, date, irwin, calfire, with_source: bool) -> dict
     existing labels are left exactly as they were: a stale label is recoverable on a
     later run, whereas resetting to zero destroys ground truth permanently and looks
     identical to a genuinely quiet day.
+
+    Returns a result carrying ``status``, one of:
+      ``labelled``       — all three sources answered and the day was written;
+      ``unscored``       — scoring has not produced this day's rows yet, so there is
+                           nothing to label (no fault, but not a success either);
+      ``source_outage``  — a source could not be read; existing labels left intact.
     """
     ds = date.strftime("%Y-%m-%d")
+
+    # Checked before FIRMS so an unscored day costs nothing against a host that has
+    # been intermittently timing out from CI.
+    scored, _ = _row_counts(client, ds)
+    if scored < MIN_SCORED_FRACTION * len(grid):
+        logger.warning("%s: NOT LABELLED — only %d of %d cells scored; nothing to label yet",
+                       ds, scored, len(grid))
+        return _record_health(client, {
+            "date": ds, "status": "unscored", "healthy": False,
+            "error": f"not scored yet ({scored}/{len(grid)} cells present)",
+            "sources": {"irwin": True, "calfire": True, "firms": False}})
+
     try:
         firms = fetch_firms_for_date(date)
     except SourceUnavailable as e:
         logger.error("%s: SKIPPED — FIRMS unavailable (%s); existing labels left untouched", ds, e)
         return _record_health(client, {
-            "date": ds, "healthy": False, "error": str(e)[:300],
+            "date": ds, "status": "source_outage", "healthy": False, "error": str(e)[:300],
             "sources": {"irwin": True, "calfire": True, "firms": False}})
 
     irwin_ids = points_to_grid_ids(irwin[irwin["date"] == date] if not irwin.empty else irwin, grid)
@@ -339,15 +405,16 @@ def backfill_date(client, grid, date, irwin, calfire, with_source: bool) -> dict
     logger.info("%s: fire cells=%d (confirmed=%d, firms-only=%d)",
                 ds, len(all_ids), confirmed, len(all_ids - irwin_ids - calfire_ids))
     return _record_health(client, {
-        "date": ds, "healthy": True, "sources": {"irwin": True, "calfire": True, "firms": True},
+        "date": ds, "status": "labelled", "healthy": True,
+        "sources": {"irwin": True, "calfire": True, "firms": True},
         "fire_cells": len(all_ids), "confirmed": confirmed,
         "irwin_cells": len(irwin_ids), "calfire_cells": len(calfire_ids),
         "firms_cells": len(firms_ids), "firms_only": len(all_ids - irwin_ids - calfire_ids)})
 
 
-def backfill_range(days: int = 7, end: dt.date | None = None) -> list[dict]:
+def backfill_range(days: int = LABEL_WINDOW_DAYS, end: dt.date | None = None, client=None) -> list[dict]:
     """Label a trailing window, aborting before any write if a YTD source is down."""
-    client = get_client()
+    client = client if client is not None else get_client()
     if client is None:
         logger.warning("Supabase not configured — nothing to backfill")
         return []
@@ -358,14 +425,16 @@ def backfill_range(days: int = 7, end: dt.date | None = None) -> list[dict]:
     ws = _has_label_source(client)
     end = end or dt.date.today()
 
-    # Stop at the first FIRMS outage instead of retrying it once per date. An
+    # Stop at the first FIRMS *outage* instead of retrying it once per date. An
     # unreachable host is unreachable for the whole window, and grinding through every
     # date against it is what previously consumed the workflow's entire time budget.
+    # An unscored date is not an outage and must not stop the walk: the newest days
+    # are routinely unscored while older ones still need labelling.
     results = []
     for d in range(1, days + 1):
         r = backfill_date(client, grid, end - dt.timedelta(days=d), irwin, calfire, ws)
         results.append(r)
-        if not r.get("healthy"):
+        if r.get("status") == "source_outage":
             remaining = days - d
             if remaining:
                 logger.error("FIRMS unreachable — abandoning the remaining %d date(s) rather "
@@ -374,36 +443,118 @@ def backfill_range(days: int = 7, end: dt.date | None = None) -> list[dict]:
     return results
 
 
+def critical_dates(client, grid, days: int, end: dt.date) -> list[str]:
+    """Dates that become permanently unlabellable unless the next run fixes them.
+
+    The trailing window gives every date several attempts, so a single failed run is
+    routine and self-healing — alarming on it trains the alarm to be ignored, which is
+    how a month of label corruption went unnoticed. Only the tail of the window is
+    urgent: past it, the date is never revisited and its ground truth is lost for good.
+    """
+    urgent = []
+    for d in range(max(1, days - AGE_OUT_MARGIN), days + 1):
+        date = end - dt.timedelta(days=d)
+        ds = date.strftime("%Y-%m-%d")
+        scored, labelled = _row_counts(client, ds)
+        if scored < MIN_SCORED_FRACTION * len(grid):
+            urgent.append(f"{ds}: never scored ({scored}/{len(grid)} cells) and leaving the "
+                          f"{days}-day label window — this day's ground truth will be lost")
+        elif labelled < scored:
+            urgent.append(f"{ds}: scored ({scored} cells) but only {labelled} labelled, and "
+                          f"leaving the {days}-day label window — ground truth will be lost")
+    return urgent
+
+
+def label_lag(client, grid, days: int, end: dt.date) -> str | None:
+    """Complain if labelling has fallen too far behind scoring.
+
+    The age-out alarm alone is not enough: it only fires at the far end of the
+    window, so a source that breaks for good — a revoked key, a moved endpoint —
+    would look identical to a run of bad luck for over a week before anything said
+    so. This catches that within a few days, while still tolerating the routine
+    one-day offset between the two jobs.
+    """
+    newest_scored = newest_labelled = None
+    for d in range(1, days + 1):
+        ds = (end - dt.timedelta(days=d)).strftime("%Y-%m-%d")
+        scored, labelled = _row_counts(client, ds)
+        if scored >= MIN_SCORED_FRACTION * len(grid):
+            newest_scored = newest_scored or ds
+            if labelled >= scored:
+                newest_labelled = ds
+                break          # walking backwards, so the first hit is the newest
+    if newest_scored is None:
+        return None            # nothing scored in the window; a scoring problem, not ours
+    if newest_labelled is None:
+        return (f"no labelled day anywhere in the last {days} days (newest scored is "
+                f"{newest_scored}) — labelling has stopped, not just stumbled")
+    lag = (dt.date.fromisoformat(newest_scored) - dt.date.fromisoformat(newest_labelled)).days
+    if lag > MAX_LABEL_LAG_DAYS:
+        return (f"labels are {lag} days behind scoring (newest scored {newest_scored}, "
+                f"newest labelled {newest_labelled}, tolerance {MAX_LABEL_LAG_DAYS}) — "
+                f"treating as a persistent failure, not a transient outage")
+    return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=7, help="trailing days to (re)label")
+    ap.add_argument("--days", type=int, default=LABEL_WINDOW_DAYS,
+                    help="trailing days to (re)label")
     ap.add_argument("--date", help="label a single YYYY-MM-DD date instead")
     ap.add_argument("--end", help="end the trailing window at YYYY-MM-DD (default: today)")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+    client = get_client()
+    if client is None:
+        print("Supabase not configured")
+        return
+    grid = _grid()
+    end = dt.date.fromisoformat(args.end) if args.end else dt.date.today()
+
     try:
         if args.date:
-            client = get_client()
-            if client is None:
-                print("Supabase not configured"); return
             d = dt.date.fromisoformat(args.date)
-            results = [backfill_date(client, _grid(), d, fetch_irwin_ca(), fetch_calfire_ca(),
+            results = [backfill_date(client, grid, d, fetch_irwin_ca(), fetch_calfire_ca(),
                                      _has_label_source(client))]
         else:
-            results = backfill_range(days=args.days,
-                                     end=dt.date.fromisoformat(args.end) if args.end else None)
+            results = backfill_range(days=args.days, end=end, client=client)
     except SourceUnavailable as e:
+        # A year-to-date feed being down aborts the whole window before any write, so
+        # nothing was even attempted. Always loud.
         logger.error("ABORTED before any write — %s", e)
         raise SystemExit(1)
 
     for r in results:
         print(r)
-    skipped = [r["date"] for r in results if not r.get("healthy")]
-    if skipped:
-        logger.error("%d date(s) skipped on source outage, labels left intact: %s",
-                     len(skipped), ", ".join(skipped))
+
+    outages = [r["date"] for r in results if r.get("status") == "source_outage"]
+    unscored = [r["date"] for r in results if r.get("status") == "unscored"]
+    if unscored:
+        logger.info("%d date(s) not scored yet, nothing to label: %s",
+                    len(unscored), ", ".join(unscored))
+    if outages:
+        logger.warning("%d date(s) skipped on a source outage, labels left intact: %s",
+                       len(outages), ", ".join(outages))
+
+    # Exit status is about *data loss*, not about whether this particular run had a
+    # clean path. A transient outage inside the self-heal window is expected and stays
+    # green; a date about to age out unlabelled is the one thing no later run can undo.
+    if args.date:
+        if outages:
+            raise SystemExit(1)
+        return
+    urgent = critical_dates(client, grid, args.days, end)
+    lag = label_lag(client, grid, args.days, end)
+    if lag:
+        urgent.append(lag)
+    if urgent:
+        for msg in urgent:
+            logger.error("AT RISK — %s", msg)
         raise SystemExit(1)
+    if outages:
+        logger.warning("Not failing the run: every affected date is still inside the "
+                       "%d-day self-heal window and will be retried.", args.days)
 
 
 if __name__ == "__main__":
