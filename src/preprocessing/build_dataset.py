@@ -181,6 +181,44 @@ def create_fire_labels(
 # 3. Weather features from gridMET
 # ---------------------------------------------------------------------------
 
+# Wall-clock ceiling on a single gridMET file transfer. A healthy download of the
+# largest variable takes well under a minute.
+GRIDMET_DOWNLOAD_DEADLINE_S = 600
+
+
+def _download_with_deadline(req, url: str, dest, deadline_s: int = GRIDMET_DOWNLOAD_DEADLINE_S):
+    """Stream ``url`` to ``dest`` under an overall time limit, leaving no partial file.
+
+    ``requests``' ``timeout`` applies per socket read, not to the transfer: a server
+    that trickles a few bytes every so often — which northwestknowledge.net does under
+    load, repeatedly — resets the clock forever and the read never returns. That has
+    hung whole scoring runs past the workflow timeout while looking like a slow
+    download, and a killed transfer leaves a truncated .nc that later fails to open
+    with an opaque HDF error, poisoning the cache until someone deletes it by hand.
+
+    So: an explicit deadline, and the partial file is removed on any failure. Raising
+    is the right outcome — the caller's next scheduled run retries, whereas a silent
+    partial would be read as real weather.
+    """
+    import time as _time
+    start = _time.monotonic()
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        resp = req.get(url, stream=True, timeout=(30, 120))
+        resp.raise_for_status()
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192 * 16):
+                f.write(chunk)
+                if _time.monotonic() - start > deadline_s:
+                    raise TimeoutError(
+                        f"gridMET download exceeded {deadline_s}s "
+                        f"({tmp.stat().st_size / 1e6:.1f} MB in) — treating the host as "
+                        f"stalled rather than hanging the run")
+        tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def fetch_gridmet_for_grid(
     grid: pd.DataFrame,
     year: int,
@@ -237,11 +275,7 @@ def fetch_gridmet_for_grid(
                 logger.info(f"Refreshing current-year {local_path.name} (was stale)")
             url = f"https://www.northwestknowledge.net/metdata/data/{var}_{year}.nc"
             logger.info(f"Downloading gridMET {var}_{year}.nc (~25-80MB)...")
-            resp = req.get(url, stream=True, timeout=300)
-            resp.raise_for_status()
-            with open(local_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192 * 16):
-                    f.write(chunk)
+            _download_with_deadline(req, url, local_path)
             logger.info(f"  Saved {local_path.stat().st_size / 1e6:.1f} MB")
         else:
             logger.info(f"Using cached {local_path.name}")
