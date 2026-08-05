@@ -20,6 +20,7 @@ from xgboost import XGBClassifier
 
 from src.data_acquisition.config import PROJECT_ROOT
 from src.models.features import select_features
+from src.models.recency import RECENCY_FEATURES, is_quiet
 
 MODELS_DIR = PROJECT_ROOT / "models"
 
@@ -40,8 +41,26 @@ class RiskModel:
     def version(self) -> str:
         return self.card.get("version", "unknown")
 
-    def to_tier(self, risk: np.ndarray) -> np.ndarray:
-        red, yellow = self.thresholds["red"], self.thresholds["yellow"]
+    def to_tier(self, risk: np.ndarray, quiet: np.ndarray | None = None) -> np.ndarray:
+        """Map calibrated risk to Red / Yellow / Green.
+
+        Red uses one statewide cutoff, so the colour means the same thing everywhere.
+        Yellow uses a per-regime cutoff when ``quiet`` is supplied and the artifacts
+        carry regime thresholds: a single global Yellow boundary leaves areas with no
+        recent fire nearby almost uniformly Green, because the model concentrates its
+        probability mass where fires cluster. Measured on the live record, splitting
+        the Yellow boundary raises the share of quiet-area ignitions carrying any
+        warning from 19.7% to 65.8% without moving Red at all.
+
+        Falls back to the global Yellow cutoff when the regime is unknown or the
+        artifacts predate this change, so an older models/ directory still scores.
+        """
+        red = self.thresholds["red"]
+        yq, ya = self.thresholds.get("yellow_quiet"), self.thresholds.get("yellow_active")
+        if quiet is None or yq is None or ya is None:
+            yellow = np.full(len(risk), self.thresholds["yellow"], dtype=float)
+        else:
+            yellow = np.where(quiet, yq, ya)
         return np.where(risk >= red, "Red", np.where(risk >= yellow, "Yellow", "Green"))
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -55,8 +74,12 @@ class RiskModel:
         X = select_features(df, strict=False)
         raw = self.model.predict_proba(X)[:, 1]
         risk = self.calibrator.transform(raw)
+        # The regime is read from the recency features, which both the nowcast and every
+        # forecast horizon already carry. If they are absent the tiering silently falls
+        # back to the global cutoff rather than guessing a regime.
+        quiet = is_quiet(df) if all(c in df.columns for c in RECENCY_FEATURES[:2]) else None
         return pd.DataFrame(
-            {"raw_probability": raw, "risk": risk, "tier": self.to_tier(risk)},
+            {"raw_probability": raw, "risk": risk, "tier": self.to_tier(risk, quiet)},
             index=df.index,
         )
 

@@ -31,7 +31,8 @@ from xgboost import XGBClassifier
 
 from src.data_acquisition.config import PROCESSED_DIR, PROJECT_ROOT
 from src.models.features import FEATURE_COLS, TARGET_COL, merge_static_features, select_features
-from src.models.recency import TAU_DAYS, DEFAULT_LAG_DAYS, merge_recency
+from src.models.recency import (DEFAULT_LAG_DAYS, QUIET_EPS, TAU_DAYS, is_quiet,
+                                merge_recency)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,20 @@ def _threshold_for_recall(y: np.ndarray, p: np.ndarray, target: float) -> float:
     _, recall, thr = precision_recall_curve(y, p)
     ok = np.where(recall[:-1] >= target)[0]
     return float(thr[ok[-1]]) if len(ok) else 0.0
+
+
+def _yellow_for_regime(p: np.ndarray, red_t: float, yellow_cov: float) -> float:
+    """Yellow cutoff giving this regime ``yellow_cov`` of its own cells, below Red.
+
+    The quantile is taken over the regime's non-Red cells so the result is always
+    strictly below ``red_t``; a quantile over the whole regime would put the active
+    regime's cutoff above Red and silently empty its Yellow band.
+    """
+    nonred = p[p < red_t]
+    if not len(nonred):
+        return float(red_t)
+    frac = min(yellow_cov * len(p) / len(nonred), 1.0)
+    return float(np.quantile(nonred, 1 - frac))
 
 
 def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> dict:
@@ -113,13 +128,45 @@ def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> di
     y_cal = y_test[cal_idx]
     red_t = _threshold_for_recall(y_cal, cal_p, RED_RECALL)
     yellow_t = _threshold_for_recall(y_cal, cal_p, YELLOW_RECALL)
-    logger.info("tier cutoffs: red>=%.4f  yellow>=%.4f", red_t, yellow_t)
+
+    # Yellow is derived separately for each fire regime; Red is not.
+    #
+    # A single global cutoff systematically starves quiet areas. Measured across 31
+    # feature combinations on four evaluation panels, every block that sharpens
+    # active-cell ranking pulls tier coverage away from cells with no recent fire
+    # nearby — the fire-recency block did so in 60 of 60 matched pairs. That is a
+    # property of one cutoff serving two populations whose base rates differ ~10x, not
+    # a defect of any feature. See docs/feature_ablation_2026-08-05.md.
+    #
+    # Red deliberately stays global so it keeps one statewide meaning: tiering Red
+    # within regime as well would make a quiet-area Red carry roughly a tenth the fire
+    # probability of an active-area Red, which is a worse lie than the one being fixed.
+    # Yellow becomes "elevated for this area", which is what a watch tier should mean.
+    # Each regime gets the global yellow *coverage* applied to its own population,
+    # measured among the cells that are not already Red.
+    #
+    # Two earlier derivations failed and are recorded so they are not retried.
+    # Targeting 80% recall within each regime does not transfer: on the 2020
+    # calibration year it needs so low a quiet cutoff that the same absolute threshold
+    # paints 51% of quiet cells yellow on the 2026 live record (and 13% in autumn
+    # 2025). Taking the top `yellow_cov` of each regime outright is degenerate: active
+    # cells are far riskier, so their cutoff lands *above* the global Red threshold and
+    # no active cell can ever be Yellow. Restricting the quantile to non-Red cells
+    # makes the cutoff coherent by construction.
+    quiet_cal = is_quiet(test_df.iloc[cal_idx])
+    yellow_cov = float(((cal_p < red_t) & (cal_p >= yellow_t)).mean())
+    yellow_quiet = _yellow_for_regime(cal_p[quiet_cal], red_t, yellow_cov)
+    yellow_active = _yellow_for_regime(cal_p[~quiet_cal], red_t, yellow_cov)
+    logger.info("tier cutoffs: red>=%.4f  yellow: quiet>=%.5f active>=%.5f (global %.5f)",
+                red_t, yellow_quiet, yellow_active, yellow_t)
 
     # 3. Persist artifacts.
     model.save_model(str(models_dir / "xgb_model.json"))
     joblib.dump(calibrator, models_dir / "calibrator.joblib")
     (models_dir / "thresholds.json").write_text(json.dumps({
         "red": red_t, "yellow": yellow_t,
+        "yellow_quiet": yellow_quiet, "yellow_active": yellow_active,
+        "quiet_eps": QUIET_EPS,
         "red_recall_target": RED_RECALL, "yellow_recall_target": YELLOW_RECALL,
     }, indent=2))
     (models_dir / "feature_list.json").write_text(json.dumps(FEATURE_COLS, indent=2))
@@ -133,7 +180,8 @@ def train(dataset_path: Path | None = None, models_dir: Path = MODELS_DIR) -> di
         "n_features": len(FEATURE_COLS),
         "params": TUNED_PARAMS,
         "metrics": {"pr_auc": pr_auc, "roc_auc": roc_auc},
-        "tiers": {"red": red_t, "yellow": yellow_t},
+        "tiers": {"red": red_t, "yellow": yellow_t,
+                  "yellow_quiet": yellow_quiet, "yellow_active": yellow_active},
         # Recorded so serving can be checked against the settings the model was
         # actually fitted under — a silent tau/lag change is invisible in the output
         # but retrains the meaning of three of its features.

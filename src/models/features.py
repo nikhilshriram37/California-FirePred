@@ -26,10 +26,18 @@ STATIC_FEATURES: list[str] = [
     "elev_mean", "ruggedness", "slope_deg", "northness", "eastness", "log_pop",
 ]
 
-# The full model feature set, in a fixed, serialization-stable order. The first 28
+# The full model feature set, in a fixed, serialization-stable order. The first 27
 # are the weather/fuel/temporal features engineered by engineer_features; the static
 # block is appended, then the recency block. Order matters: XGBoost validates feature
 # names/order at predict.
+#
+# `lightning_count` was removed 2026-08-05. The feature-block ablation
+# (docs/feature_ablation_2026-08-05.md) measured its marginal contribution on four
+# evaluation panels and found a coin flip every time (|delta PR-AUC| <= 0.0003, positive
+# in ~50% of matched pairs). It was near-constant zero in the NOAA Storm Events training
+# data, so the model never learned from it, and the live GOES-GLM values it now receives
+# are meaningless to it. Still fetched and stored in feature_history for analysis; simply
+# no longer an input.
 #
 # The recency block carries a *current* spatial prior — see src/models/recency.py.
 # Without it the model's only sense of "where fires happen" was whatever 2018-2020
@@ -38,7 +46,7 @@ STATIC_FEATURES: list[str] = [
 # engineer_features, because it needs the label history rather than the weather feed.
 FEATURE_COLS: list[str] = [
     "rmin", "vs", "pr", "vpd", "fm100", "bi", "aet", "water_deficit",
-    "lightning_count", "lat_center", "lon_center", "tmmx_c",
+    "lat_center", "lon_center", "tmmx_c",
     "erc_7d", "erc_14d", "vpd_7d", "vpd_14d", "bi_7d", "bi_14d",
     "tmmx_7d", "rmin_7d", "dry_streak", "pr_7d", "pr_14d",
     "fm100_change_3d", "vpd_change_3d", "month", "month_sin", "doy_cos",

@@ -56,6 +56,26 @@ RECENCY_FEATURES: list[str] = [
 
 CELL_DEG = 0.1
 
+# Threshold separating the two fire regimes: "nothing has burned in this cell or its
+# neighbours recently" versus everything else. At tau=30 a single ignition decays to
+# 0.05 after ~90 days, so this is roughly a three-month memory. Chosen as a round
+# multiple of tau rather than tuned — a tuned boundary would let the regime definition
+# drift toward whichever answer we were hoping for.
+#
+# This matters beyond analysis: tier cutoffs are derived per regime (see train.py), so
+# it is part of the serving contract, not just a reporting convenience.
+QUIET_EPS = 0.05
+
+
+def is_quiet(df: pd.DataFrame, eps: float = QUIET_EPS) -> np.ndarray:
+    """True where neither the cell nor its neighbours have burned recently.
+
+    Depends only on the recency features, so it is computable at scoring time for the
+    nowcast and at every forecast horizon.
+    """
+    return ((df["fire_recency_cell"].to_numpy() < eps) &
+            (df["fire_recency_nbr"].to_numpy() < eps))
+
 
 def _neighbour_index(cells: np.ndarray, centers: pd.DataFrame) -> list[list[int]]:
     """For each cell, the column positions of its 8 grid neighbours."""
